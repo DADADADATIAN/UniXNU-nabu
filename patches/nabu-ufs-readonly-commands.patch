@@ -1,0 +1,207 @@
+diff --git a/RootCommands.h b/RootCommands.h
+--- a/RootCommands.h
++++ b/RootCommands.h
+@@ -26,15 +26,106 @@
+   return (uint32_t (at[0]) << 24) | (uint32_t (at[1]) << 16) | (uint32_t (at[2]) << 8) | at[3];
+ }
+ 
++static uint32_t loadBe16 (const uint8_t *at)
++{
++  return (uint32_t (at[0]) << 8) | at[1];
++}
++
++enum : uint8_t {
++  kScsiTestUnitReady = 0x00,
++  kScsiReadCapacity10 = 0x25,
++  kScsiRead10 = 0x28,
++};
++
++enum : uint32_t { kLogicalBlockBytes = 4096 };
++
++// The board profile exposes only these three SCSI commands. Validate every
++// caller-controlled field before hostClearUcd performs DMA writes or reads MMIO.
++static IOReturn hostValidateScsiCommand (uint8_t lun, const uint8_t *cdb, unsigned cdbLength,
++                                         unsigned direction, uint32_t dataBytes)
++{
++  if (!cdb || !cdbLength || cdbLength > 16 || lun != 0) return kIOReturnBadArgument;
++  if (direction == 1) return kIOReturnNotPermitted;
++  switch (cdb[0]) {
++    case kScsiTestUnitReady:
++      if (cdbLength != 6 || direction != 0 || dataBytes) return kIOReturnBadArgument;
++      for (unsigned index = 1; index < 6; index++) if (cdb[index]) return kIOReturnBadArgument;
++      return kIOReturnSuccess;
++    case kScsiReadCapacity10:
++      if (cdbLength != 10 || direction != 2 || dataBytes != 8) return kIOReturnBadArgument;
++      for (unsigned index = 1; index < 10; index++) if (cdb[index]) return kIOReturnBadArgument;
++      return kIOReturnSuccess;
++    case kScsiRead10: {
++      if (cdbLength != 10 || direction != 2) return kIOReturnBadArgument;
++      uint32_t transferBlocks = loadBe16 (cdb + 7);
++      if (!transferBlocks || dataBytes != transferBlocks * kLogicalBlockBytes ||
++          dataBytes > kDataMax || cdb[1] || cdb[6] || cdb[9]) return kIOReturnBadArgument;
++      uint64_t lba = loadBe32(cdb + 2);
++      if (!gHost.blocks || lba >= gHost.blocks || transferBlocks > gHost.blocks - lba ||
++          transferBlocks > 0x100000000ULL - lba) return kIOReturnBadArgument;
++      if (!gHost.ready || gHost.poisoned) return kIOReturnNotReady;
++      return kIOReturnSuccess;
++    }
++    default:
++      return kIOReturnNotPermitted;
++  }
++}
++
++// A Command UPIU always carries a 16-byte CDB area, including zero padding after
++// a 6- or 10-byte command. Keep this second gate before any submission-side I/O.
++static IOReturn hostValidateScsiUcd (const uint8_t *ucd, uint32_t direction, uint32_t dataBytes)
++{
++  if (ucd[0] == 0) {
++    if (direction || dataBytes || ucd[1] || ucd[2] || ucd[3] != 1) return kIOReturnBadArgument;
++    for (unsigned i = 4; i < 32; ++i) if (ucd[i]) return kIOReturnBadArgument;
++    return kIOReturnSuccess;
++  }
++  if (ucd[0] == 0x16) {
++    if (direction || dataBytes || ucd[1] || ucd[2] || ucd[3] != 1 || ucd[4] ||
++        ucd[5] != 1 || (ucd[12] != 3 && ucd[12] != 5)) return kIOReturnNotPermitted;
++    for (unsigned i = 6; i < 12; ++i) if (ucd[i]) return kIOReturnBadArgument;
++    for (unsigned i = 14; i < 32; ++i) if (ucd[i]) return kIOReturnBadArgument;
++    return kIOReturnSuccess;
++  }
++  if (ucd[0] != 0x01) return kIOReturnNotPermitted;
++  if (ucd[1] != (direction == 2 ? 0x40 : 0) || ucd[3] ||
++      loadBe32(ucd + 12) != dataBytes) return kIOReturnBadArgument;
++  for (unsigned i = 4; i < 12; ++i) if (ucd[i]) return kIOReturnBadArgument;
++  if (direction == 1) return kIOReturnNotPermitted;
++  const uint8_t *cdb = ucd + 16;
++  unsigned cdbLength = 0;
++  switch (cdb[0]) {
++    case kScsiTestUnitReady:
++      cdbLength = 6;
++      for (unsigned index = 6; index < 16; index++) if (cdb[index]) return kIOReturnBadArgument;
++      break;
++    case kScsiReadCapacity10:
++      cdbLength = 10;
++      for (unsigned index = 10; index < 16; index++) if (cdb[index]) return kIOReturnBadArgument;
++      break;
++    case kScsiRead10:
++      cdbLength = 10;
++      for (unsigned index = 10; index < 16; index++) if (cdb[index]) return kIOReturnBadArgument;
++      break;
++    default:
++      return kIOReturnNotPermitted;
++  }
++  return hostValidateScsiCommand (ucd[2], cdb, cdbLength, direction, dataBytes);
++}
++
+ // Issue the UPIU already placed at gHost.virt + kUcdOffset through request slot 0. `direction` is
+-// the UTRD data direction (0 none, 1 from host, 2 to host). Direction 1 is reachable only through hostWrite4k, which
+-// confines it to the persistent store window. Returns the overall command status
+-// (0 = completed) in *ocs. Timeout/fatal status quarantines the allocation.
++// the UTRD data direction (0 none, 2 to host). Direction 1 is prohibited by this read-only
++// profile. Returns the overall command status (0 = completed) in *ocs. Timeout/fatal status
++// quarantines the allocation.
+ static IOReturn hostSubmit (uint32_t direction, uint32_t dataBytes, uint32_t timeoutUs, uint32_t *ocs)
+ {
++  if (!ocs || !gHost.virt) { if (ocs) *ocs = 15; return kIOReturnBadArgument; }
+   *ocs = 15;
++  if (direction == 1) return kIOReturnNotPermitted;
+   if (!timeoutUs || dataBytes > kDataMax || (dataBytes & 3) ||
+-      (dataBytes ? (direction != 1 && direction != 2) : direction != 0)) return kIOReturnBadArgument;
++      (dataBytes ? direction != 2 : direction != 0)) return kIOReturnBadArgument;
++  IOReturn allowed = hostValidateScsiUcd (gHost.virt + kUcdOffset, direction, dataBytes);
++  if (allowed != kIOReturnSuccess) return allowed;
+   if (gHost.poisoned) return kIOReturnNotReady;
+   if (read32 (gHost.hc, 0x58) != 0) {
+     gHost.poisoned = true;
+@@ -163,9 +251,11 @@
+ static IOReturn hostScsiDir (uint8_t lun, const uint8_t *cdb, unsigned cdbLength, unsigned direction, uint32_t dataBytes,
+                              uint32_t timeoutUs, uint32_t *scsiStatus)
+ {
++  if (!scsiStatus) return kIOReturnBadArgument;
+   *scsiStatus = 0xffff;
+-  if (!cdb || !cdbLength || cdbLength > 16 || dataBytes > kDataMax || direction > 2 ||
+-      (dataBytes & 3) || (dataBytes ? !direction : direction)) return kIOReturnBadArgument;
++  IOReturn allowed = hostValidateScsiCommand (lun, cdb, cdbLength, direction, dataBytes);
++  if (allowed != kIOReturnSuccess) return allowed;
++  if (!timeoutUs) return kIOReturnBadArgument;
+   if (!hostClearUcd ()) return kIOReturnNotReady;
+   uint8_t *ucd = gHost.virt + kUcdOffset;
+   ucd[0] = 0x01;                      // COMMAND UPIU
+@@ -204,6 +294,7 @@
+ static IOReturn hostScsi (uint8_t lun, const uint8_t *cdb, unsigned cdbLength, bool toHost, uint32_t dataBytes,
+                           uint32_t timeoutUs, uint32_t *scsiStatus)
+ {
++  if (!scsiStatus) return kIOReturnBadArgument;
+   if (dataBytes && !toHost) { *scsiStatus = 0xffff; return kIOReturnBadArgument; }
+   return hostScsiDir (lun, cdb, cdbLength, dataBytes ? 2U : 0U, dataBytes, timeoutUs, scsiStatus);
+ }
+@@ -237,20 +328,46 @@
+   return kIOReturnSuccess;
+ }
+ 
+-// Read `blocks` (<= kDataMax / 4096) 4096-byte blocks of LUN `lun` starting at `lba` into dst.
++// READ CAPACITY(10) for LUN 0. The caller validates the 4096-byte logical block
++// size and installs the returned count in gHost.blocks before enabling reads.
++// The UINT32_MAX last-LBA sentinel requires READ CAPACITY(16), which this profile
++// deliberately does not claim to support.
++static IOReturn hostReadCapacity4k (uint64_t *blocks)
++{
++  if (!blocks || !gHost.virt || !gHost.lock) return kIOReturnBadArgument;
++  if (gHost.poisoned) return kIOReturnNotReady;
++  IOLockLock (gHost.lock);
++  uint8_t cdb[10] = { kScsiReadCapacity10 };
++  uint32_t scsi = 0;
++  IOReturn status = hostScsi (0, cdb, 10, true, 8, 1000000, &scsi);
++  if (status == kIOReturnSuccess) {
++    const uint8_t *data = gHost.virt + kDataOffset;
++    uint32_t lastLba = loadBe32 (data);
++    uint32_t blockBytes = loadBe32 (data + 4);
++    if (lastLba == 0xffffffffU || blockBytes != kLogicalBlockBytes) status = kIOReturnUnsupported;
++    else *blocks = uint64_t (lastLba) + 1;
++  }
++  IOLockUnlock (gHost.lock);
++  return status;
++}
++
++// Read `blocks` (<= kDataMax / 4096) 4096-byte blocks of LUN 0 starting at `lba` into dst.
+ static IOReturn hostRead4k (uint8_t lun, uint64_t lba, uint32_t blocks, void *dst)
+ {
+-  if (!gHost.ready || !dst || !blocks || blocks > kDataMax / 4096 || lba > 0xffffffffULL - (blocks - 1)) {
++  if (!dst || !blocks || lun != 0 || blocks > kDataMax / kLogicalBlockBytes ||
++      !gHost.blocks || lba >= gHost.blocks || blocks > gHost.blocks - lba ||
++      lba > 0xffffffffULL || blocks > 0x100000000ULL - lba) {
+     return kIOReturnBadArgument;
+   }
++  if (!gHost.ready || gHost.poisoned) return kIOReturnNotReady;
+   IOLockLock (gHost.lock);
+   gRootDiagnostic.lba = lba;
+-  uint8_t cdb[10] = { 0x28, 0, uint8_t (lba >> 24), uint8_t (lba >> 16), uint8_t (lba >> 8), uint8_t (lba),
++  uint8_t cdb[10] = { kScsiRead10, 0, uint8_t (lba >> 24), uint8_t (lba >> 16), uint8_t (lba >> 8), uint8_t (lba),
+                       0, uint8_t (blocks >> 8), uint8_t (blocks), 0 };
+   uint32_t scsi = 0;
+-  IOReturn status = hostScsi (lun, cdb, 10, true, blocks * 4096U, 1000000, &scsi);
++  IOReturn status = hostScsi (0, cdb, 10, true, blocks * kLogicalBlockBytes, 1000000, &scsi);
+   if (status == kIOReturnSuccess) {
+-    memcpy (dst, gHost.virt + kDataOffset, blocks * 4096U);
++    memcpy (dst, gHost.virt + kDataOffset, blocks * kLogicalBlockBytes);
+   }
+   IOLockUnlock (gHost.lock);
+   return status;
+@@ -299,15 +416,8 @@
+   return kIOReturnNotPermitted;
+ }
+ 
+-// SYNCHRONIZE CACHE(10) for the whole LUN: everything written so far is on the medium when this returns.
++// SYNCHRONIZE CACHE(10) is outside this profile's SCSI allowlist.
+ static IOReturn hostSyncCache (void)
+ {
+-  if (!gHost.ready || (!gStoreOpen && !gLogOpen)) return kIOReturnNotReady;
+-  IOLockLock (gHost.lock);
+-  uint8_t cdb[10] = { 0x35 };
+-  uint32_t scsi = 0;
+-  IOReturn status = hostScsiDir (0, cdb, 10, 0, 0, 10000000, &scsi);
+-  IOLockUnlock (gHost.lock);
+-  return status;
+-}
+-
++  return kIOReturnNotPermitted;
++}

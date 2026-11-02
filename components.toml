@@ -1,0 +1,200 @@
+schema_version = 1
+
+# nabu device-scope components. SoC-scope components (ArmCpu, NativeUfs,
+# NabuAdreno, AdrenoMetal, metal2vulkan) are declared by the sm8150 soc source.
+
+[[component]]
+id = "device"
+kind = "package"
+function = "nabu platform composition: board services, UFS resources, scanout handoff, boot log and diagnostics"
+scope = "board"
+repository = "https://github.com/zzweiqing/UniXNU-nabu"
+revision = "REQUIRED_DEVICE_COMMIT"
+path = "."
+hardware = ["Xiaomi Pad 5", "SM8150", "Adreno 640"]
+os_abi = ["ipados-17.7-21H16"]
+board_dependencies = ["Apple original kernelcache 21H16", "stock Xiaomi UEFI + rEFInd", "ESP FAT layout"]
+verified_devices = ["nabu"]
+dependencies = []
+source_files = ["platform/NabuBootPMGR.cpp", "platform/NabuHeartbeat.cpp", "platform/NabuKeybagNotifications.cpp", "platform/NabuLegacyDisplayProbe.cpp", "platform/NabuLegacyDiscovery.cpp", "platform/NabuLegacyStubs.cpp", "platform/NabuWatchdog.cpp", "ufs/NabuLogCore.h", "ufs/NabuLogFormat.h", "ufs/NabuLogUfs.h", "ufs/NabuLogVolume.h", "ufs/NabuLogWatch.h", "ufs/NabuUfsHostSafety.h", "ufs/NabuUfsQueue.h", "ufs/NabuUfsResources.h", "ufs/NabuUfsService.h"]
+runtime_identifiers = ["NABULOG2", "nabu-log", "NabuBootPMGR", "NabuHeartbeat", "NabuWatchdog"]
+build_stage = "embedded"
+build = []
+outputs = []
+
+[[component]]
+id = "NabuPlatform"
+kind = "driver"
+function = "nabu board platform: legacy display discovery, scanout handoff, graphics status and legacy stubs"
+scope = "board"
+repository = "https://github.com/zzweiqing/UniXNU-nabu"
+revision = "REQUIRED_DEVICE_COMMIT"
+path = "platform"
+hardware = ["Xiaomi Pad 5"]
+os_abi = ["ipados-17.7-21H16"]
+board_dependencies = ["DarwinBoot GOP handoff", "board ADT"]
+verified_devices = ["nabu"]
+dependencies = []
+source_files = ["NabuGraphicsStatus.cpp", "NabuLegacyCpuPixels.h", "NabuLegacyCpuPresent.cpp", "NabuGpuScanoutHandoff.h", "NabuGpuScanoutWire.h", "NabuScanoutSourceCache.h", "NabuGpuUserprobeAddon.h", "NabuGpuProblemStream.h"]
+runtime_identifiers = ["NGPSwap", "nabu-gpu"]
+build_stage = "embedded"
+build = []
+outputs = []
+
+[[component]]
+id = "NabuTouch"
+kind = "driver"
+function = "NT36523 Novatek touch digitizer service"
+scope = "input"
+repository = "https://github.com/zzweiqing/UniXNU-nabu"
+revision = "REQUIRED_DEVICE_COMMIT"
+path = "platform"
+hardware = ["NT36523", "Xiaomi Pad 5"]
+os_abi = ["ipados-17.7-21H16", "IOHIDFamily"]
+board_dependencies = ["IOHIDEventDriverSafeBoot prelink root"]
+verified_devices = ["nabu"]
+dependencies = []
+source_files = ["NabuTouch.cpp"]
+runtime_identifiers = ["NabuTouch"]
+build_stage = "embedded"
+build = ["nabu_touch_build.py"]
+outputs = []
+
+[[component]]
+id = "NativeRamBlock"
+kind = "driver"
+function = "Volatile RAM Data volume with fixed seed UUID"
+scope = "storage"
+# Volatile transport (gitlink of UniXNU/UniXNU 245aca1a).
+repository = "https://github.com/UniXNU/NativeRamBlock.git"
+revision = "d4d22d9819b0162eda49f6402235dddc2279410d"
+path = "drivers/NativeRamBlock"
+hardware = ["SM8150"]
+os_abi = ["ipados-17.7-21H16", "IOStorageFamily"]
+board_dependencies = ["Data UUID 0A5EED00-0000-4000-8000-000000000001 seed"]
+verified_devices = ["nabu"]
+dependencies = []
+source_files = ["NativeRamBlock.cpp"]
+runtime_identifiers = ["NativeRamBlock"]
+build_stage = "kernel"
+build = ["build-nabu-ram-block.py"]
+outputs = []
+
+[[component]]
+id = "NabuUserprobe"
+kind = "driver"
+function = "Bounded user-space GPU/Metal telemetry probe for bring-up"
+scope = "diagnostics"
+repository = "https://github.com/zzweiqing/UniXNU-nabu"
+revision = "REQUIRED_DEVICE_COMMIT"
+path = "userprobe"
+hardware = ["Xiaomi Pad 5"]
+os_abi = ["ipados-17.7-21H16"]
+board_dependencies = ["AdrenoMetal plugin"]
+verified_devices = ["nabu"]
+dependencies = ["AdrenoMetal"]
+source_files = ["nabu_gpu_userprobe.cpp"]
+runtime_identifiers = ["nabu-gpu-userprobe"]
+build_stage = "payload"
+build = []
+outputs = []
+
+# Provenance overrides for upstream-catalog components: the revisions below are
+# the exact submodule gitlinks of the proven kernel build (UniXNU/UniXNU
+# 245aca1a); names map to the current catalog ids.
+
+[[component]]
+id = "DarwinBoot"
+kind = "driver"
+function = "UEFI boot driver loading the XNU payload"
+scope = "board"
+repository = "https://github.com/UniXNU/DarwinBoot.git"
+revision = "d099354d0eab34df5088ca1ba89c9c88bc3260bb"
+path = "drivers/DarwinBoot"
+hardware = ["Xiaomi Pad 5"]
+os_abi = ["ipados-17.7-21H16"]
+board_dependencies = ["UniXNU.efi menu", "rEFInd"]
+verified_devices = ["nabu"]
+dependencies = []
+source_files = []
+runtime_identifiers = ["DarwinBoot"]
+build_stage = "loader"
+build = []
+outputs = []
+
+[[component]]
+id = "XnuPrelink"
+kind = "kit"
+function = "Mach-O prelink producing the ESP kernel.macho candidate"
+scope = "board"
+# The proven build calls it NativePrelink (kits/NativePrelink/emit_prelink.py).
+repository = "https://github.com/UniXNU/NativePrelink.git"
+revision = "2b6ffb50117eee820b98aca9bd51b5c7dfb2970e"
+path = "kits/NativePrelink"
+hardware = []
+os_abi = ["ipados-17.7-21H16"]
+board_dependencies = []
+verified_devices = ["nabu"]
+dependencies = []
+source_files = ["emit_prelink.py"]
+runtime_identifiers = ["NativePrelink"]
+build_stage = "kernel"
+build = []
+outputs = ["out/nabu/kernel/kernel.macho"]
+
+[[component]]
+id = "VirtioMmioBlock"
+kind = "driver"
+function = "Volatile scratch storage transport (proven pin: NativeVirtioBlock)"
+scope = "storage"
+repository = "https://github.com/UniXNU/NativeVirtioBlock.git"
+revision = "98909eb9198a4360d7a43be831887cb8b74d814d"
+path = "drivers/NativeVirtioBlock"
+hardware = ["SM8150"]
+os_abi = ["ipados-17.7-21H16"]
+board_dependencies = []
+verified_devices = ["nabu"]
+dependencies = []
+source_files = []
+runtime_identifiers = ["NativeVirtioBlock"]
+build_stage = "kernel"
+build = ["build-nabu-virtio.py"]
+outputs = []
+
+[[component]]
+id = "GopFramebuffer"
+kind = "driver"
+function = "Legacy GOP framebuffer backend vendored at vendor/GopFramebuffer-cf3b429"
+scope = "display"
+repository = "https://github.com/UniXNU/GopFramebuffer.git"
+revision = "cf3b42979a9c44219e7bb149543e6fc3388b58ed"
+path = "vendor/GopFramebuffer-cf3b429"
+hardware = ["Xiaomi Pad 5"]
+os_abi = ["ipados-17.7-21H16"]
+board_dependencies = ["stock Xiaomi UEFI GOP"]
+verified_devices = ["nabu"]
+dependencies = []
+source_files = ["NativeLegacyDisplay.cpp", "NativeLegacyRequest.h"]
+runtime_identifiers = ["NativeLegacyDisplay"]
+build_stage = "kernel"
+build = ["build-nabu-legacy-display.py"]
+outputs = []
+
+[[component]]
+id = "AppleKeyStoreState"
+kind = "driver"
+function = "Key-store event bridge (proven pin: NativeKeyStoreEvents)"
+scope = "board"
+repository = "https://github.com/UniXNU/NativeKeyStoreEvents.git"
+revision = "e59bac4ad1ac8825919ae94da8440a64d8ab90b3"
+path = "drivers/NativeKeyStoreEvents"
+hardware = ["Xiaomi Pad 5"]
+os_abi = ["ipados-17.7-21H16"]
+board_dependencies = []
+verified_devices = ["nabu"]
+dependencies = []
+source_files = []
+runtime_identifiers = ["NativeKeyStoreEvents"]
+build_stage = "kernel"
+build = []
+outputs = []

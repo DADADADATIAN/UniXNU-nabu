@@ -1,0 +1,526 @@
+# nabu (Xiaomi Pad 5, SM8150) read-only UFS board port
+#
+# Base: UniXNU/NativeUfs af785c1777161a62931425c2faaa536ce0bebd5b (unmodified upstream).
+# Apply to a fresh copy of that checkout; never to the reference tree itself.
+#
+# This ports the production read path only: probe/compatible, the controller window
+# (DT 0x1d84000+0x2500, mapped page-rounded), the apps_smmu window (0x15000000+0x100000)
+# and its UFS stream (0x300), and a read-only SM8150 GCC table (gcc-sm8150.c).
+# It does not touch GCC or the PHY at run time, opens no write window, builds no
+# WRITE(10), and keeps the sheng Data-store / diagnostic-log boot arguments inert.
+#
+# The base has no ordinary IOBlockStorageDevice export; IOStorageFamily bindings
+# are still needed before linking. Applying this patch alone proves no boot or I/O.
+diff --git a/GccUfs.h b/GccUfs.h
+index 5d11663..8c93ca5 100644
+--- a/GccUfs.h
++++ b/GccUfs.h
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: BSD-2-Clause-Patent
+-// SM8550 GCC registers used by UFS, transcribed as facts from the public
+-// Linux gcc-sm8550.c clock driver. No write is performed by NativeUfs yet.
++// SM8550 (sheng) GCC registers used by UFS, transcribed as facts from the public
++// Linux gcc-sm8550.c clock driver. The nabu (SM8150) port does not include this
++// header: it carries its own read-only table in NabuBoard.h. No write is performed.
+ #ifndef NATIVE_UFS_GCC_UFS_H
+ #define NATIVE_UFS_GCC_UFS_H
+ 
+diff --git a/NabuBoard.h b/NabuBoard.h
+new file mode 100644
+index 0000000..52a78f1
+--- /dev/null
++++ b/NabuBoard.h
+@@ -0,0 +1,72 @@
++// SPDX-License-Identifier: BSD-2-Clause-Patent
++// nabu (Xiaomi Pad 5, SM8150) UFS facts for the read-only production path.
++//
++// Sources, read off this device or from public Linux:
++//   /soc/ufshc@1d84000       reg 0x1d84000+0x2500 (reg-names "ufs_mem","ufs_ice"),
++//                            compatible "qcom,sm8150-ufshc","qcom,ufshc",
++//                            iommus = <&apps_smmu 0x300 0>
++//                            (diagnostics/nabu-2026-10-21: android-live.dtb and
++//                             linux-runtime/dtb-6.17.0-xiaomi-nabu-tmm-UFS-slowdown+)
++//   /soc/ufsphy_mem@1d87000  qcom,sm8150-qmp-ufs-phy -- never touched by this port
++//   /soc/apps-smmu@0x15000000 reg 0x15000000+0x100000, ARM SMMU-500 register layout
++//   GCC                      drivers/clk/qcom/gcc-sm8150.c, read-only table
++//   logical block            4096 bytes (storage.txt: Samsung KLUDG4UHDC-B0E1)
++//
++// A readable controller (CAP/VER non-zero) only proves that the GCC UFS branches are
++// running. It says nothing about the PHY or the link: that needs HCS.DP and a UIC
++// status read, and this port writes neither GCC nor PHY.
++#ifndef NABU_UFS_BOARD_H
++#define NABU_UFS_BOARD_H
++
++#include <stdint.h>
++
++#if defined(NABU_UFS_ALLOW_WRITES) && NABU_UFS_ALLOW_WRITES
++#error "nabu UFS: the write / Data-store path is not qualified on this board"
++#endif
++
++namespace nabu_ufs {
++
++struct Board {
++  const char *compatible;          // the node this port was written for
++  const char *compatibleFallback;  // the generic compatible the same node also carries
++  uint64_t gccBase;                // clock-controller@100000
++  uint64_t hcBase;                 // ufshc@1d84000
++  uint64_t hcBytes;                // DT reg size
++  uint64_t hcMapBytes;             // page-rounded mapping of hcBytes
++  uint64_t smmuBase;               // apps_smmu@0x15000000
++  uint64_t smmuBytes;              // DT reg size; one mapping covers SMR/S2CR/CBAR space
++  uint16_t streamId;               // iommus = <&apps_smmu 0x300 0>
++  uint32_t logicalBlockBytes;      // READ CAPACITY(10), verified before enabling the read path
++  uint32_t gdscr;                  // GCC (gcc-sm8150.c), read only
++  uint32_t axiEnable;
++  uint32_t ahbEnable;
++  uint32_t uniproEnable;
++  uint32_t iceEnable;
++  uint32_t phyAuxEnable;
++  uint32_t txSymbol0Enable;
++  uint32_t rxSymbol0Enable;
++  uint32_t rxSymbol1Enable;
++  uint32_t aggreAxiEnable;
++  uint32_t bcr;
++  bool writesAllowed;
++};
++
++constexpr Board kBoard = {
++  "qcom,sm8150-ufshc",
++  "qcom,ufshc",
++  0x00100000ULL,
++  0x01d84000ULL,
++  0x00002500ULL,
++  0x00003000ULL,
++  0x15000000ULL,
++  0x00100000ULL,
++  0x0300,
++  4096,
++  0x77004, 0x77010, 0x77014, 0x77058, 0x7705c, 0x77090,
++  0x77018, 0x7701c, 0x770ac, 0x770c0, 0x77000,
++  false,
++};
++
++} // namespace nabu_ufs
++
++#endif
+diff --git a/NativeUfs.cpp b/NativeUfs.cpp
+--- a/NativeUfs.cpp
++++ b/NativeUfs.cpp
+@@ -1,6 +1,8 @@
+ // SPDX-License-Identifier: BSD-2-Clause-Patent
+-// Native sheng SM8550 UFS bring-up. Default-off: no MMIO is touched unless
+-// native-ufs-probe=1 is present. This is a register probe, not a storage driver.
++// Native UFS bring-up for nabu (Xiaomi Pad 5, SM8150), read-only. Default-off: no
++// MMIO is touched unless native-ufs-probe=<n> or native-ufs-root=1 is present.
++// Board facts (controller window, SMMU stream, GCC read-only table) are in
++// NabuBoard.h; this port opens no write window and builds no WRITE(10).
+ #include <IOKit/IOService.h>
+ #include <IOKit/IOPlatformExpert.h>
+ #include <IOKit/storage/IOBlockStorageDevice.h>
+@@ -29,7 +31,7 @@
+ #include <libkern/libkern.h>
+ #include <pexpert/pexpert.h>
+ #include <kern/debug.h>
+-#include "GccUfs.h"
++#include "NabuBoard.h"
+ #include "RootDiagnostics.h"
+ #include "TransferPoll.h"
+ #include "SmmuTakeover.h"
+@@ -125,10 +127,12 @@
+   bool match = false;
+   if (data) {
+     const char *text = static_cast<const char *> (data->getBytesNoCopy ());
+-    match = text && contains (text, data->getLength (), "qcom,sm8550-ufshc");
++    match = text && (contains (text, data->getLength (), nabu_ufs::kBoard.compatible) ||
++                     contains (text, data->getLength (), nabu_ufs::kBoard.compatibleFallback));
+   } else if (string) {
+     const char *text = string->getCStringNoCopy ();
+-    match = text && contains (text, string->getLength (), "qcom,sm8550-ufshc");
++    match = text && (contains (text, string->getLength (), nabu_ufs::kBoard.compatible) ||
++                     contains (text, string->getLength (), nabu_ufs::kBoard.compatibleFallback));
+   }
+   if (!match) {
+     return nullptr;
+@@ -152,9 +156,10 @@
+ }
+ 
+ // Read-only inspection (native-ufs-probe=2): reports what firmware left behind.
+-// The physical windows are the sheng board DT's own GCC (0x100000) and UFS host
+-// (0x1d84000, 0x3000) ranges. The controller is read only if the GCC says its
++// The physical windows are the nabu DT's own GCC (0x100000) and UFS host
++// (0x1d84000, 0x2500) ranges. The controller is read only if the GCC says its
+ // GDSC is powered and the AXI/AHB branches are running; nothing is written.
++// SM8150 has no separate UFS mem-phy GDSC, so that register is not read here.
+ static uintptr_t mapPhys (uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMap> &keep)
+ {
+   IODeviceMemory *memory = IODeviceMemory::withRange (phys, length);
+@@ -168,29 +173,28 @@
+ 
+ void NativeUfs::inspect (void)
+ {
+-  OSSharedPtr<IOMemoryMap> gccMap, memPhyMap, hcMap;
+-  uintptr_t gcc = mapPhys (GCC_BASE + 0x77000, 0x1000, gccMap);
+-  uintptr_t memPhy = mapPhys (GCC_BASE + 0x9e000, 0x1000, memPhyMap);
+-  if (!gcc || !memPhy) {
+-    panic ("NATIVE_UFS inspect: GCC map failed gcc=%p memphy=%p", (void *) gcc, (void *) memPhy);
+-  }
+-  uint32_t gdsc = read32 (gcc, GCC_UFS_PHY_GDSCR - 0x77000);
+-  uint32_t axi = read32 (gcc, GCC_UFS_PHY_AXI_ENABLE - 0x77000);
+-  uint32_t ahb = read32 (gcc, GCC_UFS_PHY_AHB_ENABLE - 0x77000);
+-  uint32_t unipro = read32 (gcc, GCC_UFS_PHY_UNIPRO_CORE_ENABLE - 0x77000);
+-  uint32_t txs = read32 (gcc, GCC_UFS_PHY_TX_SYMBOL0_ENABLE - 0x77000);
+-  uint32_t rxs = read32 (gcc, GCC_UFS_PHY_RX_SYMBOL0_ENABLE - 0x77000);
+-  uint32_t aux = read32 (gcc, GCC_UFS_PHY_PHY_AUX_ENABLE - 0x77000);
+-  uint32_t memGdsc = read32 (memPhy, 0);
++  OSSharedPtr<IOMemoryMap> gccMap, hcMap;
++  uintptr_t gcc = mapPhys (nabu_ufs::kBoard.gccBase + 0x77000, 0x1000, gccMap);
++  if (!gcc) {
++    panic ("NATIVE_UFS inspect: GCC map failed gcc=%p", (void *) gcc);
++  }
++  uint32_t gdsc = read32 (gcc, nabu_ufs::kBoard.gdscr - 0x77000);
++  uint32_t axi = read32 (gcc, nabu_ufs::kBoard.axiEnable - 0x77000);
++  uint32_t ahb = read32 (gcc, nabu_ufs::kBoard.ahbEnable - 0x77000);
++  uint32_t unipro = read32 (gcc, nabu_ufs::kBoard.uniproEnable - 0x77000);
++  uint32_t txs = read32 (gcc, nabu_ufs::kBoard.txSymbol0Enable - 0x77000);
++  uint32_t rxs = read32 (gcc, nabu_ufs::kBoard.rxSymbol0Enable - 0x77000);
++  uint32_t aux = read32 (gcc, nabu_ufs::kBoard.phyAuxEnable - 0x77000);
+   // GDSCR bit31 PWR_ON; CBCR bit31 CLK_OFF.
+   bool powered = (gdsc & 0x80000000U) != 0;
+-  // Hardware 2026-10-17: AXI running, AHB enabled but CLK_OFF (bit31). With bit1 (HW gating)
+-  // set the branch wakes on access, so enable bits, not CLK_OFF, gate the read-only probe.
++  // sheng (SM8550) read AXI running with AHB enabled but CLK_OFF (bit31); with bit1 (HW
++  // gating) set, the branch wakes on access, so the enable bits - not CLK_OFF - gate this
++  // read-only probe. nabu has not been measured yet, so both are reported, not assumed.
+   bool busClocks = !(axi & 0x80000000U) && (ahb & 0x1U) && (axi & 0x1U);
+   uint32_t cap = 0, ver = 0, hcs = 0, hce = 0, utrlba = 0, is = 0;
+   unsigned readHc = 0;
+   if (powered && busClocks) {
+-    uintptr_t hc = mapPhys (UFS_HC_BASE, UFS_HC_SIZE, hcMap);
++    uintptr_t hc = mapPhys (nabu_ufs::kBoard.hcBase, nabu_ufs::kBoard.hcMapBytes, hcMap);
+     if (hc) {
+       cap = read32 (hc, 0x00);
+       ver = read32 (hc, 0x08);
+@@ -201,13 +205,15 @@
+       readHc = 1;
+     }
+   }
++  // cap/ver readable means the GCC branches are on. It is not evidence that the PHY
++  // or the link is up: HCS.DP and the UIC status are what say that.
+   panic ("NATIVE_UFS inspect\n"
+-         "gdsc=%08x memphygdsc=%08x\n"
++         "gdsc=%08x\n"
+          "axi=%08x ahb=%08x unipro=%08x\n"
+          "txsym=%08x rxsym=%08x aux=%08x\n"
+          "hc_read=%u cap=%08x ver=%08x\n"
+          "is=%08x hcs=%08x hce=%08x utrlba=%08x",
+-         gdsc, memGdsc, axi, ahb, unipro, txs, rxs, aux, readHc, cap, ver, is, hcs, hce, utrlba);
++         gdsc, axi, ahb, unipro, txs, rxs, aux, readHc, cap, ver, is, hcs, hce, utrlba);
+ }
+ 
+ // Adopt the controller the firmware left running (native-ufs-probe=3) and issue
+@@ -268,9 +274,8 @@
+ 
+ 
+ // Give the UFS stream a pass-through mapping the way Linux does on this firmware.
+-// Hardware 2026-10-17: after hand-off apps_smmu has sCR0 = 0x002f0406 (USFCFG=1, unmatched
+-// streams fault), no stream-match entry for the UFS host (ID 0x60, `iommus = <&apps_smmu 0x60
+-// 0x0>` in the board DT), a TYPE=BYPASS S2CR reads back as FAULT, and sCR0 writes are ignored.
++// nabu: apps_smmu@0x15000000, `iommus = <&apps_smmu 0x300 0>` (Linux DT for this board);
++// whether the firmware left USFCFG=1 and writes to sCR0 ignored is read back, never assumed.
+ // Linux (drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c, qcom_smmu_cfg_probe + qcom_smmu_write_s2cr,
+ // "bypass_quirk") meets exactly this: it reserves the LAST context bank (num_context_banks-1),
+ // writes SCTLR=0 (stage 1 disabled) and CBAR.TYPE=S1_TRANS_S2_BYPASS there, and maps a bypass
+@@ -281,11 +286,13 @@
+ static void smmuBypassStream (uint16_t stream, OSSharedPtr<IOMemoryMap> &keep, uint32_t *report,
+                               uint64_t dma, uint64_t bytes)
+ {
+-  uintptr_t smmu = mapPhys (0x15000000ULL, 0xd0000, keep);
++  uintptr_t smmu = mapPhys (nabu_ufs::kBoard.smmuBase, nabu_ufs::kBoard.smmuBytes, keep);
+   if (!smmu) {
+     panic ("NATIVE_UFS smmu: map failed");
+   }
+-  UfsSmmuPlan plan = planUfsSmmu (stream, dma, bytes, [smmu](unsigned offset) { return read32 (smmu, offset); });
++  UfsSmmuPlan plan = planUfsSmmu (stream, dma, bytes,
++                                  [smmu](unsigned offset) { return read32 (smmu, offset); },
++                                  static_cast<unsigned> (nabu_ufs::kBoard.smmuBytes));
+   gRootDiagnostic.smmuId1 = read32 (smmu, 0x24);
+   gRootDiagnostic.smmuId2 = read32 (smmu, 0x28);
+   gRootDiagnostic.smmuSlot = plan.slot;
+@@ -325,7 +332,7 @@
+ void NativeUfs::adoptAndRead (unsigned level)
+ {
+   OSSharedPtr<IOMemoryMap> hcMap;
+-  uintptr_t hc = mapPhys (UFS_HC_BASE, UFS_HC_SIZE, hcMap);
++  uintptr_t hc = mapPhys (nabu_ufs::kBoard.hcBase, nabu_ufs::kBoard.hcMapBytes, hcMap);
+   if (!hc) {
+     panic ("NATIVE_UFS adopt: controller map failed");
+   }
+@@ -367,7 +374,7 @@
+   unsigned stopLoops = 10000;
+   while ((read32 (hc, 0x60) & 1) && stopLoops--) IODelay (10);
+   if (read32 (hc, 0x60) & 1) panic ("NATIVE_UFS adopt: request list did not stop");
+-  smmuBypassStream (0x60, smmuMap, smmuReport, phys, 16384);
++  smmuBypassStream (nabu_ufs::kBoard.streamId, smmuMap, smmuReport, phys, 16384);
+   write32 (hc, 0x50, static_cast<uint32_t> (phys));
+   write32 (hc, 0x54, static_cast<uint32_t> (phys >> 32));
+   write32 (hc, 0x20, 0xffffffffU);  // clear stale status
+@@ -668,7 +675,7 @@
+ void NativeUfs::dumpFirmwareList (void)
+ {
+   OSSharedPtr<IOMemoryMap> hcMap, listMap, ucdMap;
+-  uintptr_t hc = mapPhys (UFS_HC_BASE, UFS_HC_SIZE, hcMap);
++  uintptr_t hc = mapPhys (nabu_ufs::kBoard.hcBase, nabu_ufs::kBoard.hcMapBytes, hcMap);
+   if (!hc) {
+     panic ("NATIVE_UFS dump: controller map failed");
+   }
+@@ -711,12 +718,12 @@
+ }
+ 
+ // Read-only dump of the apps SMMU (apps_smmu@15000000) global register space and the stream
+-// match entry for the UFS stream ID 0x60 (native-ufs-probe=7). SMMUv2 layout: sCR0 0x0,
++// match entry for this board's UFS stream (native-ufs-probe=7). SMMUv2 layout: sCR0 0x0,
+ // IDR0 0x20, sGFSR 0x48, SMR(n) 0x800+4n, S2CR(n) 0xc00+4n. Nothing is written.
+ void NativeUfs::inspectSmmu (void)
+ {
+   OSSharedPtr<IOMemoryMap> map;
+-  uintptr_t smmu = mapPhys (0x15000000ULL, 0x1000, map);
++  uintptr_t smmu = mapPhys (nabu_ufs::kBoard.smmuBase, 0x1000, map);
+   if (!smmu) {
+     panic ("NATIVE_UFS smmu: map failed");
+   }
+@@ -735,7 +742,8 @@
+       valid++;
+       typeCount[(s2cr >> 16) & 3]++;
+       uint32_t mask = (smr >> 16) & 0x7fff;
+-      if (match == 0xffff && (((smr ^ 0x60U) & 0x7fffU) & ~mask) == 0) {
++      if (match == 0xffff &&
++          (((smr ^ uint32_t (nabu_ufs::kBoard.streamId)) & 0x7fffU) & ~mask) == 0) {
+         match = index;
+         matchSmr = smr;
+         matchS2cr = s2cr;
+@@ -745,9 +753,9 @@
+   panic ("NATIVE_UFS smmu\n"
+          "scr0=%08x idr0=%08x idr1=%08x gfsr=%08x\n"
+          "nsmr=%u valid=%u types t0=%u t1=%u t2=%u\n"
+-         "sid0x60 match=%x smr=%08x s2cr=%08x",
++         "sid=%04x match=%x smr=%08x s2cr=%08x",
+          scr0, idr0, idr1, gfsr, count, valid, typeCount[0], typeCount[1], typeCount[2],
+-         match, matchSmr, matchS2cr);
++         unsigned (nabu_ufs::kBoard.streamId), match, matchSmr, matchS2cr);
+ }
+ 
+ // Read-only context-bank survey (native-ufs-probe=8): CBAR/CBA2R in gr1 and SCTLR/TTBR0 in the
+@@ -755,14 +763,15 @@
+ void NativeUfs::inspectContextBanks (void)
+ {
+   OSSharedPtr<IOMemoryMap> map;
+-  uintptr_t smmu = mapPhys (0x15000000ULL, 0xd0000, map);
++  uintptr_t smmu = mapPhys (nabu_ufs::kBoard.smmuBase, nabu_ufs::kBoard.smmuBytes, map);
+   if (!smmu) {
+     panic ("NATIVE_UFS cb: map failed");
+   }
+   uint32_t idr1 = read32 (smmu, 0x24);
+   unsigned numCb = idr1 & 0xff;
+   unsigned globalPages = 1U << (((idr1 >> 28) & 7) + 1);
+-  if (globalPages > 128 || numCb > 128 || (globalPages + numCb) * 0x1000 > 0xd0000) {
++  if (globalPages > 128 || numCb > 128 ||
++      (globalPages + numCb) * 0x1000 > nabu_ufs::kBoard.smmuBytes) {
+     panic ("NATIVE_UFS cb: unexpected geometry idr1=%08x", idr1);
+   }
+   unsigned cbarZero = 0, sctlrZero = 0, mSet = 0, bothZero = 0;
+@@ -891,7 +900,7 @@
+     return true;
+   }
+   gRootDiagnostic.stage = "controller map";
+-  gHost.hc = mapPhys (UFS_HC_BASE, UFS_HC_SIZE, gHost.hcMap);
++  gHost.hc = mapPhys (nabu_ufs::kBoard.hcBase, nabu_ufs::kBoard.hcMapBytes, gHost.hcMap);
+   if (!gHost.hc) {
+     *why = "controller map";
+     return false;
+@@ -927,7 +936,7 @@
+   uint32_t report[3] = { 0, 0, 0 };
+   gRootDiagnostic.stage = "SMMU and request list";
+   if (!hostStopQueue (why)) return false;
+-  smmuBypassStream (0x60, gHost.smmuMap, report, gHost.phys, kDmaBytes);
++  smmuBypassStream (nabu_ufs::kBoard.streamId, gHost.smmuMap, report, gHost.phys, kDmaBytes);
+   gHost.smmu = gHost.smmuMap->getVirtualAddress ();
+   uint32_t idr1 = read32 (gHost.smmu, 0x24);
+   gHost.cb = gHost.smmu + ((1U << (((idr1 >> 28) & 7) + 1)) + (report[0] >> 16)) * 4096;
+@@ -970,6 +979,18 @@
+     uint8_t tur[6] = { 0, 0, 0, 0, 0, 0 };
+     uint32_t scsi = 0;
+     if (hostScsi (0, tur, 6, false, 0, 200000, &scsi) == kIOReturnSuccess) {
++      gRootDiagnostic.stage = "LUN block size";
++      uint8_t capacity[10] = { 0x25 };
++      uint32_t capacityScsi = 0;
++      if (hostScsi (0, capacity, 10, true, 8, 1000000, &capacityScsi) != kIOReturnSuccess) {
++        *why = "READ CAPACITY(10)";
++        return false;
++      }
++      uint32_t blockBytes = loadBe32 (gHost.virt + kDataOffset + 4);
++      if (blockBytes != nabu_ufs::kBoard.logicalBlockBytes) {
++        *why = "unsupported LUN 0 logical block size";
++        return false;
++      }
+       gHost.ready = true;
+       return true;
+     }
+@@ -994,10 +1015,10 @@
+ 
+ }
+ 
+-// ---- Persistent Data store window (sheng-data-persist) ----------------------------------------------------------
+-// The only part of this driver that ever writes. The consumer (NativeRamBlock's overlay) asks for a window of the given
+-// size at the END of the userdata partition. Mode 1 (boot argument sheng-data-persist=1) only reads: it proves the window and
+-// lets the consumer inspect its header. Mode 2 additionally opens the write window. A window is refused unless it lies inside
++// ---- Persistent Data store window (sheng-data-persist; closed on nabu) -------------------------------------------
++// The only part of this driver that ever writes, and the reason this port has none. The consumer (NativeRamBlock's
++// overlay) asks for a window of the given size at the END of the userdata partition; mode 1 only reads, mode 2 opens the
++// write window. storeMode() returns 0 here, so neither mode is reachable on this board and hostWrite4k refuses. A window is refused unless it lies inside
+ // the partition, clear of the flashed root image plus a 4 MiB guard, and is at most a quarter of the partition.
+ namespace {
+ struct StoreGeometry {
+@@ -1030,13 +1051,10 @@
+ 
+ static unsigned storeMode (void)
+ {
+-  static int cached = -1;
+-  if (cached < 0) {
+-    uint32_t value = 0;
+-    if (!PE_parse_boot_argn ("sheng-data-persist", &value, sizeof (value)) || value > 2) value = 0;
+-    cached = static_cast<int> (value);
+-  }
+-  return static_cast<unsigned> (cached);
++  // nabu board port: the persistent Data store is a sheng feature and is not qualified
++  // here. It stays closed even if sheng-data-persist is present, so no write window can
++  // be opened on this board.
++  return 0;
+ }
+ }
+ 
+@@ -1106,18 +1124,13 @@
+   return storeMode () == 2 && gStoreRegionBlocks && hostSyncCache () == kIOReturnSuccess;
+ }
+ 
+-// ---- Diagnostic log window (sheng-log=1) --------------------------------------------------------------------------
++// ---- Diagnostic log window (sheng-log=1; closed on nabu) ----------------------------------------------------------
+ // The board's log writer (kits/sheng BootLog.c) gets the last kLogReserveBlocks of userdata and the kExportBlocks below them, refused
+ // unless the partition holds them clear of the flashed root image plus a 4 MiB guard. Off without the boot argument.
+ static unsigned logMode (void)
+ {
+-  static int cached = -1;
+-  if (cached < 0) {
+-    uint32_t value = 0;
+-    if (!PE_parse_boot_argn ("sheng-log", &value, sizeof (value)) || value > 1) value = 0;
+-    cached = static_cast<int> (value);
+-  }
+-  return static_cast<unsigned> (cached);
++  // nabu board port: the diagnostic log window shares the same write path and stays closed.
++  return 0;
+ }
+ 
+ // Returns 1 with the window's first absolute LBA and size in 4096-byte blocks, 0 on refusal (reason in *why, may be null).
+@@ -1469,9 +1482,13 @@
+     void lock () { IOLockLock (mutex); }
+     void unlock () { IOLockUnlock (mutex); }
+     IOReturn read (uint64_t lba, uint32_t blocks, void *out) {
++#if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
+       uint64_t t0 = timerTicks ();
++#endif
+       IOReturn r = hostRead4k (0, lba, blocks, out);
++#if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
+       __atomic_fetch_add (&native_ufs_read_ticks, timerTicks () - t0, __ATOMIC_RELAXED);
++#endif
+       return r;
+     }
+     IOReturn verify (uint64_t index, const void *data, size_t length) {
+diff --git a/RootCommands.h b/RootCommands.h
+index 996304d..b56c01b 100644
+--- a/RootCommands.h
++++ b/RootCommands.h
+@@ -273,7 +273,9 @@ static bool hostLogOpen (uint64_t first, uint64_t blocks)
+   return true;
+ }
+ 
+-static bool hostInWindow (uint64_t lba, uint32_t blocks)
++// The window check keeps its meaning for a board that may write; the nabu port never
++// opens a window, so it is unused there.
++static bool __attribute__ ((unused)) hostInWindow (uint64_t lba, uint32_t blocks)
+ {
+   if (gStoreOpen && lba >= gStoreFirst && lba - gStoreFirst < gStoreBlocks && blocks <= gStoreBlocks - (lba - gStoreFirst)) return true;
+   return gLogOpen && lba >= gLogFirst && lba - gLogFirst < gLogBlocks && blocks <= gLogBlocks - (lba - gLogFirst);
+@@ -289,21 +291,12 @@ static bool hostStoreOpen (uint64_t first, uint64_t blocks)
+   return true;
+ }
+ 
+-// WRITE(10) of `blocks` 4096-byte blocks from src to lba on LUN 0; the range must lie inside one open window.
++// nabu board port: read-only. No write window is ever opened on this board, so this
++// driver builds no WRITE(10) at all: the controller sees READ-class traffic only.
+ static IOReturn hostWrite4k (uint8_t lun, uint64_t lba, uint32_t blocks, const void *src, bool fua = false)
+ {
+-  if (!gHost.ready || !src || !blocks || blocks > kDataMax / 4096 || lun != 0 || !hostInWindow (lba, blocks)) {
+-    return kIOReturnBadArgument;
+-  }
+-  IOLockLock (gHost.lock);
+-  gRootDiagnostic.lba = lba;
+-  memcpy (gHost.virt + kDataOffset, src, blocks * 4096U);
+-  uint8_t cdb[10] = { 0x2a, uint8_t (fua ? 0x08 : 0), uint8_t (lba >> 24), uint8_t (lba >> 16), uint8_t (lba >> 8), uint8_t (lba),
+-                      0, uint8_t (blocks >> 8), uint8_t (blocks), 0 };
+-  uint32_t scsi = 0;
+-  IOReturn status = hostScsiDir (0, cdb, 10, 1, blocks * 4096U, 2000000, &scsi);
+-  IOLockUnlock (gHost.lock);
+-  return status;
++  (void) lun; (void) lba; (void) blocks; (void) src; (void) fua;
++  return kIOReturnNotPermitted;
+ }
+ 
+ // SYNCHRONIZE CACHE(10) for the whole LUN: everything written so far is on the medium when this returns.
+diff --git a/SmmuTakeover.h b/SmmuTakeover.h
+index c30f5a9..0e23a45 100644
+--- a/SmmuTakeover.h
++++ b/SmmuTakeover.h
+@@ -18,8 +18,11 @@ static unsigned ufsSmmuAddressBits(unsigned code)
+   }
+ }
+ // One attempt with a given context bank (counted from the top). The caller falls back to lower banks when this one is held by another stream.
++// `mapBytes` is how much of the SMMU register space the caller actually mapped; the
++// context banks must lie inside it. The default keeps the sheng window.
+ template <class Read>
+-static UfsSmmuPlan planUfsSmmuBank(uint16_t stream, uint64_t dma, uint64_t bytes, Read read, unsigned bankFromTop)
++static UfsSmmuPlan planUfsSmmuBank(uint16_t stream, uint64_t dma, uint64_t bytes, Read read, unsigned bankFromTop,
++                                   unsigned mapBytes = 0xd0000U)
+ {
+   UfsSmmuPlan p;
+   uint32_t idr0 = read(0x20), idr2 = read(0x28);
+@@ -37,7 +40,7 @@ static UfsSmmuPlan planUfsSmmuBank(uint16_t stream, uint64_t dma, uint64_t bytes
+   unsigned banks = idr1 & 255;
+   p.pages = 1U << (((idr1 >> 28) & 7) + 1);
+   if ((idr1 >> 31) || !count || p.pages > 128 || banks < 2 || banks > 128 ||
+-      (p.pages + banks) * 4096 > 0xd0000) {
++      (p.pages + banks) * 4096 > mapBytes) {
+     p.error = "unsupported SMMU geometry"; return p;
+   }
+   if (count > 128) count = 128; // Firmware's reliably accessible groups only.
+@@ -80,10 +83,11 @@ static UfsSmmuPlan planUfsSmmuBank(uint16_t stream, uint64_t dma, uint64_t bytes
+ // (no other valid stream maps it, translation off). Any other refusal (a conflicting mapping of our own stream, no free group, unsupported geometry)
+ // is final and is reported as the first attempt saw it.
+ template <class Read>
+-static UfsSmmuPlan planUfsSmmu(uint16_t stream, uint64_t dma, uint64_t bytes, Read read)
++static UfsSmmuPlan planUfsSmmu(uint16_t stream, uint64_t dma, uint64_t bytes, Read read,
++                               unsigned mapBytes = 0xd0000U)
+ {
+   enum {kBankAttempts = 8};
+-  UfsSmmuPlan first = planUfsSmmuBank(stream, dma, bytes, read, 0);
++  UfsSmmuPlan first = planUfsSmmuBank(stream, dma, bytes, read, 0, mapBytes);
+   if (!first.error) return first;
+   // "conflicting" is retried too: our own stream may already sit on a lower bank from an earlier run that had to fall back.
+   auto retryable = [](const char *e) {
+@@ -92,7 +96,7 @@ static UfsSmmuPlan planUfsSmmu(uint16_t stream, uint64_t dma, uint64_t bytes, Re
+   };
+   if (!retryable(first.error)) return first;
+   for (unsigned attempt = 1; attempt < kBankAttempts; ++attempt) {
+-    UfsSmmuPlan next = planUfsSmmuBank(stream, dma, bytes, read, attempt);
++    UfsSmmuPlan next = planUfsSmmuBank(stream, dma, bytes, read, attempt, mapBytes);
+     if (!next.error) return next;
+     if (!retryable(next.error)) break;
+   }

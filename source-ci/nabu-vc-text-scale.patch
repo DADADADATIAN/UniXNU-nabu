@@ -1,0 +1,312 @@
+diff --git a/osfmk/console/video_console.c b/osfmk/console/video_console.c
+index 4c1edf1..2785565 100644
+--- a/osfmk/console/video_console.c
++++ b/osfmk/console/video_console.c
+@@ -1290,8 +1290,27 @@ static uint32_t vc_rendered_font_size = 0;
+ /* Size of a character in the table (bytes) */
+ static int vc_rendered_char_size = 0;
+ 
++/*
++ * NABU: the ISO font is fixed at 8x16 pixels, which is too small to read when
++ * the native text console is photographed on a 1600x2560 panel.  The
++ * nabu-vc-scale boot argument replicates every glyph pixel into an SxS block
++ * and shrinks the text grid accordingly.  1 is the stock console; the patch
++ * is inert unless the argument is present.
++ */
++#define VC_SRC_WIDTH            8
++#define VC_SRC_HEIGHT           16
++#if (ISO_CHAR_WIDTH != VC_SRC_WIDTH) || (ISO_CHAR_HEIGHT != VC_SRC_HEIGHT)
++#error "NABU console scale assumes the 8x16 ISO font"
++#endif
++
++#define NABU_VC_MAX_SCALE       4
++static int vc_font_scale = 1;
++#define VC_CHAR_WIDTH           (VC_SRC_WIDTH * vc_font_scale)
++#define VC_CHAR_HEIGHT          (VC_SRC_HEIGHT * vc_font_scale)
++
+ #define REN_MAX_DEPTH   32
+-static unsigned char vc_rendered_char[ISO_CHAR_HEIGHT * ((REN_MAX_DEPTH / 8) * ISO_CHAR_WIDTH)];
++static unsigned char vc_rendered_char[VC_SRC_HEIGHT * NABU_VC_MAX_SCALE *
++    ((REN_MAX_DEPTH / 8) * VC_SRC_WIDTH * NABU_VC_MAX_SCALE)];
+ 
+ #if defined(XNU_TARGET_OS_OSX)
+ #define CONFIG_VC_PROGRESS_METER_SUPPORT        1
+@@ -1336,7 +1355,7 @@ vc_clear_screen(unsigned int xx, unsigned int yy, unsigned int scrreg_top,
+ 		return;
+ 	}
+ 
+-	linelongs = vinfo.v_rowbytes * (ISO_CHAR_HEIGHT >> 2);
++	linelongs = vinfo.v_rowbytes * (VC_CHAR_HEIGHT >> 2);
+ 	rowline = vinfo.v_rowscanbytes >> 2;
+ 	rowlongs = vinfo.v_rowbytes >> 2;
+ 
+@@ -1384,29 +1403,32 @@ vc_render_char(unsigned char ch, unsigned char *renderptr, short newdepth)
+ 		uint32_t  *longptr;
+ 	} current;      /* current place in rendered font, multiple types. */
+ 	unsigned char *theChar; /* current char in iso_font */
+-	int line;
++	int line, row, bit, sx;
+ 
+ 	current.charptr = renderptr;
+-	theChar = iso_font + (ch * ISO_CHAR_HEIGHT);
++	theChar = iso_font + (ch * VC_SRC_HEIGHT);
+ 
+-	for (line = 0; line < ISO_CHAR_HEIGHT; line++) {
+-		unsigned char mask = 1;
+-		do {
+-			switch (newdepth) {
+-			case 8:
+-				*current.charptr++ = (*theChar & mask) ? 0xFF : 0;
+-				break;
+-			case 16:
+-				*current.shortptr++ = (*theChar & mask) ? 0xFFFF : 0;
+-				break;
++	for (line = 0; line < VC_SRC_HEIGHT; line++) {
++		for (row = 0; row < vc_font_scale; row++) {
++			for (bit = 0; bit < VC_SRC_WIDTH; bit++) {
++				int on = (*theChar >> bit) & 1;
+ 
+-			case 30:
+-			case 32:
+-				*current.longptr++ = (*theChar & mask) ? 0xFFFFFFFF : 0;
+-				break;
++				for (sx = 0; sx < vc_font_scale; sx++) {
++					switch (newdepth) {
++					case 8:
++						*current.charptr++ = on ? 0xFF : 0;
++						break;
++					case 16:
++						*current.shortptr++ = on ? 0xFFFF : 0;
++						break;
++					case 30:
++					case 32:
++						*current.longptr++ = on ? 0xFFFFFFFF : 0;
++						break;
++					}
++				}
+ 			}
+-			mask <<= 1;
+-		} while (mask); /* while the single bit drops to the right */
++		}
+ 		theChar++;
+ 	}
+ }
+@@ -1426,14 +1448,14 @@ vc_paint_char_8(unsigned int xx, unsigned int yy, unsigned char ch, int attrs,
+ 		theChar = (uint32_t*)(vc_rendered_char);
+ 	}
+ 	where = (uint32_t*)(vinfo.v_baseaddr +
+-	    (yy * ISO_CHAR_HEIGHT * vinfo.v_rowbytes) +
+-	    (xx * ISO_CHAR_WIDTH));
++	    (yy * VC_CHAR_HEIGHT * vinfo.v_rowbytes) +
++	    (xx * VC_CHAR_WIDTH));
+ 
+ 	if (!attrs) {
+-		for (i = 0; i < ISO_CHAR_HEIGHT; i++) {         /* No attr? FLY !*/
++		for (i = 0; i < VC_CHAR_HEIGHT; i++) {         /* No attr? FLY !*/
+ 			uint32_t *store = where;
+ 			int x;
+-			for (x = 0; x < 2; x++) {
++			for (x = 0; x < 2 * vc_font_scale; x++) {
+ 				uint32_t val = *theChar++;
+ 				val = (vc_color_back & ~val) | (vc_color_fore & val);
+ 				*store++ = val;
+@@ -1442,10 +1464,10 @@ vc_paint_char_8(unsigned int xx, unsigned int yy, unsigned char ch, int attrs,
+ 			where = (uint32_t*)(((unsigned char*)where) + vinfo.v_rowbytes);
+ 		}
+ 	} else {
+-		for (i = 0; i < ISO_CHAR_HEIGHT; i++) { /* a little slower */
++		for (i = 0; i < VC_CHAR_HEIGHT; i++) { /* a little slower */
+ 			uint32_t *store = where, lastpixel = 0;
+ 			int x;
+-			for (x = 0; x < 2; x++) {
++			for (x = 0; x < 2 * vc_font_scale; x++) {
+ 				uint32_t val = *theChar++, save = val;
+ 				if (attrs & ATTR_BOLD) { /* bold support */
+ 					if (lastpixel && !(save & 0xFF000000)) {
+@@ -1464,7 +1486,7 @@ vc_paint_char_8(unsigned int xx, unsigned int yy, unsigned char ch, int attrs,
+ 				if (attrs & ATTR_REVERSE) {
+ 					val = ~val;
+ 				}
+-				if (attrs & ATTR_UNDER && i == ISO_CHAR_HEIGHT - 1) {
++				if (attrs & ATTR_UNDER && i == VC_CHAR_HEIGHT - 1) {
+ 					val = ~val;
+ 				}
+ 
+@@ -1494,14 +1516,14 @@ vc_paint_char_16(unsigned int xx, unsigned int yy, unsigned char ch, int attrs,
+ 		theChar = (uint32_t*)(vc_rendered_char);
+ 	}
+ 	where = (uint32_t*)(vinfo.v_baseaddr +
+-	    (yy * ISO_CHAR_HEIGHT * vinfo.v_rowbytes) +
+-	    (xx * ISO_CHAR_WIDTH * 2));
++	    (yy * VC_CHAR_HEIGHT * vinfo.v_rowbytes) +
++	    (xx * VC_CHAR_WIDTH * 2));
+ 
+ 	if (!attrs) {
+-		for (i = 0; i < ISO_CHAR_HEIGHT; i++) {         /* No attrs ? FLY ! */
++		for (i = 0; i < VC_CHAR_HEIGHT; i++) {         /* No attrs ? FLY ! */
+ 			uint32_t *store = where;
+ 			int x;
+-			for (x = 0; x < 4; x++) {
++			for (x = 0; x < 4 * vc_font_scale; x++) {
+ 				uint32_t val = *theChar++;
+ 				val = (vc_color_back & ~val) | (vc_color_fore & val);
+ 				*store++ = val;
+@@ -1510,10 +1532,10 @@ vc_paint_char_16(unsigned int xx, unsigned int yy, unsigned char ch, int attrs,
+ 			where = (uint32_t*)(((unsigned char*)where) + vinfo.v_rowbytes);
+ 		}
+ 	} else {
+-		for (i = 0; i < ISO_CHAR_HEIGHT; i++) { /* a little bit slower */
++		for (i = 0; i < VC_CHAR_HEIGHT; i++) { /* a little bit slower */
+ 			uint32_t *store = where, lastpixel = 0;
+ 			int x;
+-			for (x = 0; x < 4; x++) {
++			for (x = 0; x < 4 * vc_font_scale; x++) {
+ 				uint32_t val = *theChar++, save = val;
+ 				if (attrs & ATTR_BOLD) { /* bold support */
+ 					if (save == 0xFFFF0000) {
+@@ -1525,7 +1547,7 @@ vc_paint_char_16(unsigned int xx, unsigned int yy, unsigned char ch, int attrs,
+ 				if (attrs & ATTR_REVERSE) {
+ 					val = ~val;
+ 				}
+-				if (attrs & ATTR_UNDER && i == ISO_CHAR_HEIGHT - 1) {
++				if (attrs & ATTR_UNDER && i == VC_CHAR_HEIGHT - 1) {
+ 					val = ~val;
+ 				}
+ 
+@@ -1564,14 +1586,14 @@ vc_paint_char_32(unsigned int xx, unsigned int yy, unsigned char ch, int attrs,
+ 		theCharPrevious = NULL;
+ 	}
+ 	where = (uint32_t*)(vinfo.v_baseaddr +
+-	    (yy * ISO_CHAR_HEIGHT * vinfo.v_rowbytes) +
+-	    (xx * ISO_CHAR_WIDTH * 4));
++	    (yy * VC_CHAR_HEIGHT * vinfo.v_rowbytes) +
++	    (xx * VC_CHAR_WIDTH * 4));
+ 
+ 	if (!attrs) {
+-		for (i = 0; i < ISO_CHAR_HEIGHT; i++) {         /* No attrs ? FLY ! */
++		for (i = 0; i < VC_CHAR_HEIGHT; i++) {         /* No attrs ? FLY ! */
+ 			uint32_t *store = where;
+ 			int x;
+-			for (x = 0; x < 8; x++) {
++			for (x = 0; x < 8 * vc_font_scale; x++) {
+ 				uint32_t val = *theChar++;
+ 				if (theCharPrevious == NULL || val != *theCharPrevious++) {
+ 					val = (vc_color_back & ~val) | (vc_color_fore & val);
+@@ -1584,10 +1606,10 @@ vc_paint_char_32(unsigned int xx, unsigned int yy, unsigned char ch, int attrs,
+ 			where = (uint32_t *)(((unsigned char*)where) + vinfo.v_rowbytes);
+ 		}
+ 	} else {
+-		for (i = 0; i < ISO_CHAR_HEIGHT; i++) { /* a little slower */
++		for (i = 0; i < VC_CHAR_HEIGHT; i++) { /* a little slower */
+ 			uint32_t *store = where, lastpixel = 0;
+ 			int x;
+-			for (x = 0; x < 8; x++) {
++			for (x = 0; x < 8 * vc_font_scale; x++) {
+ 				uint32_t val = *theChar++, save = val;
+ 				if (attrs & ATTR_BOLD) { /* bold support */
+ 					if (lastpixel && !save) {
+@@ -1597,7 +1619,7 @@ vc_paint_char_32(unsigned int xx, unsigned int yy, unsigned char ch, int attrs,
+ 				if (attrs & ATTR_REVERSE) {
+ 					val = ~val;
+ 				}
+-				if (attrs & ATTR_UNDER && i == ISO_CHAR_HEIGHT - 1) {
++				if (attrs & ATTR_UNDER && i == VC_CHAR_HEIGHT - 1) {
+ 					val = ~val;
+ 				}
+ 
+@@ -1667,7 +1689,7 @@ vc_render_font(short newdepth)
+ 	kfree_data(rendered_font, rendered_font_size);
+ 
+ 	if (newdepth) {
+-		rendered_char_size = ISO_CHAR_HEIGHT * (((newdepth + 7) / 8) * ISO_CHAR_WIDTH);
++		rendered_char_size = VC_CHAR_HEIGHT * (((newdepth + 7) / 8) * VC_CHAR_WIDTH);
+ 		rendered_font_size = (ISO_CHAR_MAX - ISO_CHAR_MIN + 1) * rendered_char_size;
+ 		rendered_font = kalloc_data(rendered_font_size, Z_WAITOK);
+ 	}
+@@ -1708,21 +1730,22 @@ vc_reverse_cursor(unsigned int xx, unsigned int yy)
+ 	}
+ 
+ 	where = (uint32_t*)(vinfo.v_baseaddr +
+-	    (yy * ISO_CHAR_HEIGHT * vinfo.v_rowbytes) +
+-	    (xx /** ISO_CHAR_WIDTH*/ * vinfo.v_depth));
+-	for (line = 0; line < ISO_CHAR_HEIGHT; line++) {
++	    (yy * VC_CHAR_HEIGHT * vinfo.v_rowbytes) +
++	    (xx * vinfo.v_depth * vc_font_scale));
++	for (line = 0; line < VC_CHAR_HEIGHT; line++) {
+ 		switch (vinfo.v_depth) {
+ 		case 8:
+-			where[0] = ~where[0];
+-			where[1] = ~where[1];
++			for (col = 0; col < 2 * vc_font_scale; col++) {
++				where[col] = ~where[col];
++			}
+ 			break;
+ 		case 16:
+-			for (col = 0; col < 4; col++) {
++			for (col = 0; col < 4 * vc_font_scale; col++) {
+ 				where[col] = ~where[col];
+ 			}
+ 			break;
+ 		case 32:
+-			for (col = 0; col < 8; col++) {
++			for (col = 0; col < 8 * vc_font_scale; col++) {
+ 				where[col] = ~where[col];
+ 			}
+ 			break;
+@@ -1740,7 +1763,7 @@ vc_scroll_down(int num, unsigned int scrreg_top, unsigned int scrreg_bottom)
+ 		return;
+ 	}
+ 
+-	linelongs = vinfo.v_rowbytes * (ISO_CHAR_HEIGHT >> 2);
++	linelongs = vinfo.v_rowbytes * (VC_CHAR_HEIGHT >> 2);
+ 	rowline = vinfo.v_rowbytes >> 2;
+ 	rowscanline = vinfo.v_rowscanbytes >> 2;
+ 
+@@ -1751,7 +1774,7 @@ vc_scroll_down(int num, unsigned int scrreg_top, unsigned int scrreg_bottom)
+ 	i = (scrreg_bottom - scrreg_top) - num;
+ 
+ 	while (i-- > 0) {
+-		for (line = 0; line < ISO_CHAR_HEIGHT; line++) {
++		for (line = 0; line < VC_CHAR_HEIGHT; line++) {
+ 			/*
+ 			 * Only copy what is displayed
+ 			 */
+@@ -1774,7 +1797,7 @@ vc_scroll_up(int num, unsigned int scrreg_top, unsigned int scrreg_bottom)
+ 		return;
+ 	}
+ 
+-	linelongs = vinfo.v_rowbytes * (ISO_CHAR_HEIGHT >> 2);
++	linelongs = vinfo.v_rowbytes * (VC_CHAR_HEIGHT >> 2);
+ 	rowline = vinfo.v_rowbytes >> 2;
+ 	rowscanline = vinfo.v_rowscanbytes >> 2;
+ 
+@@ -1784,7 +1807,7 @@ vc_scroll_up(int num, unsigned int scrreg_top, unsigned int scrreg_bottom)
+ 	i = (scrreg_bottom - scrreg_top) - num;
+ 
+ 	while (i-- > 0) {
+-		for (line = 0; line < ISO_CHAR_HEIGHT; line++) {
++		for (line = 0; line < VC_CHAR_HEIGHT; line++) {
+ 			/*
+ 			 * Only copy what is displayed
+ 			 */
+@@ -2782,8 +2805,18 @@ gc_pause( boolean_t pause, boolean_t graphics_now )
+ static void
+ vc_initialize(__unused struct vc_info * vinfo_p)
+ {
+-	vinfo.v_rows = vinfo.v_height / ISO_CHAR_HEIGHT;
+-	vinfo.v_columns = vinfo.v_width / ISO_CHAR_WIDTH;
++	int nabu_scale = 1;
++
++	PE_parse_boot_argn("nabu-vc-scale", &nabu_scale, sizeof(nabu_scale));
++	if (nabu_scale < 1) {
++		nabu_scale = 1;
++	} else if (nabu_scale > NABU_VC_MAX_SCALE) {
++		nabu_scale = NABU_VC_MAX_SCALE;
++	}
++	vc_font_scale = nabu_scale;
++
++	vinfo.v_rows = vinfo.v_height / VC_CHAR_HEIGHT;
++	vinfo.v_columns = vinfo.v_width / VC_CHAR_WIDTH;
+ 	vinfo.v_rowscanbytes = ((vinfo.v_depth + 7) / 8) * vinfo.v_width;
+ 	vc_uiscale = vinfo.v_scale;
+ 	if (vc_uiscale > kMaxProgressData) {

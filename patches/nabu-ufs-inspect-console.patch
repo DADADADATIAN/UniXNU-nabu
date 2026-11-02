@@ -1,0 +1,119 @@
+diff --git a/NativeUfs.cpp b/NativeUfs.cpp
+--- a/NativeUfs.cpp
++++ b/NativeUfs.cpp
+@@ -31,6 +31,7 @@
+ #include <libkern/libkern.h>
+ #include <pexpert/pexpert.h>
+ #include <kern/debug.h>
++#include <sys/systm.h>
+ #include "NabuBoard.h"
+ #include "RootDiagnostics.h"
+ #include "TransferPoll.h"
+@@ -44,6 +45,11 @@
+ // Optional passive observer; absent in ordinary builds. It may run while a
+ // window lock is held, so its contract forbids blocking or transport access.
+ void boot_progress_poll (void) __attribute__((weak));
++// Inspect state is independent of root-storage bring-up counters.
++volatile uint32_t native_ufs_inspect_stage = 0;
++volatile uint32_t native_ufs_inspect_complete = 0;
++volatile uint32_t native_ufs_inspect_hc_read = 0;
++volatile uint32_t native_ufs_inspect_snapshot[13] = {};
+ volatile uint32_t native_ufs_probe_calls = 0;
+ volatile uint32_t native_ufs_matched = 0;
+ volatile uint32_t native_ufs_probe_requested = 0;
+@@ -173,17 +179,36 @@
+ 
+ void NativeUfs::inspect (void)
+ {
++  native_ufs_inspect_stage = 1;
++  PE_initialize_console (nullptr, kPETextScreen);
++  printf ("NATIVE_UFS inspect BEGIN\n");
++  native_ufs_inspect_stage = 2;
++  printf ("UFS stage: map GCC\n");
+   OSSharedPtr<IOMemoryMap> gccMap, hcMap;
+   uintptr_t gcc = mapPhys (nabu_ufs::kBoard.gccBase + 0x77000, 0x1000, gccMap);
+   if (!gcc) {
+     panic ("NATIVE_UFS inspect: GCC map failed gcc=%p", (void *) gcc);
+   }
++  native_ufs_inspect_stage = 3;
++  printf ("UFS stage: read GCC power\n");
+   uint32_t gdsc = read32 (gcc, nabu_ufs::kBoard.gdscr - 0x77000);
++  native_ufs_inspect_stage = 4;
++  printf ("UFS stage: read GCC AXI\n");
+   uint32_t axi = read32 (gcc, nabu_ufs::kBoard.axiEnable - 0x77000);
++  native_ufs_inspect_stage = 5;
++  printf ("UFS stage: read GCC AHB\n");
+   uint32_t ahb = read32 (gcc, nabu_ufs::kBoard.ahbEnable - 0x77000);
++  native_ufs_inspect_stage = 6;
++  printf ("UFS stage: read GCC UniPro\n");
+   uint32_t unipro = read32 (gcc, nabu_ufs::kBoard.uniproEnable - 0x77000);
++  native_ufs_inspect_stage = 7;
++  printf ("UFS stage: read GCC TX\n");
+   uint32_t txs = read32 (gcc, nabu_ufs::kBoard.txSymbol0Enable - 0x77000);
++  native_ufs_inspect_stage = 8;
++  printf ("UFS stage: read GCC RX\n");
+   uint32_t rxs = read32 (gcc, nabu_ufs::kBoard.rxSymbol0Enable - 0x77000);
++  native_ufs_inspect_stage = 9;
++  printf ("UFS stage: read GCC AUX\n");
+   uint32_t aux = read32 (gcc, nabu_ufs::kBoard.phyAuxEnable - 0x77000);
+   // GDSCR bit31 PWR_ON; CBCR bit31 CLK_OFF.
+   bool powered = (gdsc & 0x80000000U) != 0;
+@@ -194,26 +219,51 @@
+   uint32_t cap = 0, ver = 0, hcs = 0, hce = 0, utrlba = 0, is = 0;
+   unsigned readHc = 0;
+   if (powered && busClocks) {
++    native_ufs_inspect_stage = 10;
++    printf ("UFS stage: map HC\n");
+     uintptr_t hc = mapPhys (nabu_ufs::kBoard.hcBase, nabu_ufs::kBoard.hcMapBytes, hcMap);
+     if (hc) {
++      native_ufs_inspect_stage = 11;
++      printf ("UFS stage: read HC CAP\n");
+       cap = read32 (hc, 0x00);
++      native_ufs_inspect_stage = 12;
++      printf ("UFS stage: read HC VER\n");
+       ver = read32 (hc, 0x08);
++      native_ufs_inspect_stage = 13;
++      printf ("UFS stage: read HC IS\n");
+       is = read32 (hc, 0x20);
++      native_ufs_inspect_stage = 14;
++      printf ("UFS stage: read HC HCS\n");
+       hcs = read32 (hc, 0x30);
++      native_ufs_inspect_stage = 15;
++      printf ("UFS stage: read HC HCE\n");
+       hce = read32 (hc, 0x34);
++      native_ufs_inspect_stage = 16;
++      printf ("UFS stage: read HC UTRLBA\n");
+       utrlba = read32 (hc, 0x50);
+       readHc = 1;
+     }
+   }
+   // cap/ver readable means the GCC branches are on. It is not evidence that the PHY
+   // or the link is up: HCS.DP and the UIC status are what say that.
+-  panic ("NATIVE_UFS inspect\n"
+-         "gdsc=%08x\n"
+-         "axi=%08x ahb=%08x unipro=%08x\n"
+-         "txsym=%08x rxsym=%08x aux=%08x\n"
+-         "hc_read=%u cap=%08x ver=%08x\n"
+-         "is=%08x hcs=%08x hce=%08x utrlba=%08x",
+-         gdsc, axi, ahb, unipro, txs, rxs, aux, readHc, cap, ver, is, hcs, hce, utrlba);
++  const uint32_t snapshot[] = {gdsc, axi, ahb, unipro, txs, rxs, aux,
++                               cap, ver, is, hcs, hce, utrlba};
++  for (unsigned i = 0; i < 13; ++i) native_ufs_inspect_snapshot[i] = snapshot[i];
++  native_ufs_inspect_hc_read = readHc;
++  native_ufs_inspect_stage = 17;
++  native_ufs_inspect_complete = 1;
++  // Other boot threads may reopen/clear the console. Reprint this snapshot,
++  // without another MMIO access or any controller/storage write.
++  for (;;) {
++    printf ("NATIVE_UFS inspect snapshot (registers only)\n"
++            "gdsc=%08x axi=%08x ahb=%08x unipro=%08x\n"
++            "txsym=%08x rxsym=%08x aux=%08x\n"
++            "hc_read=%u cap=%08x ver=%08x\n"
++            "is=%08x hcs=%08x hce=%08x utrlba=%08x\n",
++            gdsc, axi, ahb, unipro, txs, rxs, aux, readHc, cap, ver, is, hcs, hce, utrlba);
++    printf ("NATIVE_UFS inspect DONE (snapshot retained)\n");
++    IOSleep (10000);
++  }
+ }
+ 
+ // Adopt the controller the firmware left running (native-ufs-probe=3) and issue

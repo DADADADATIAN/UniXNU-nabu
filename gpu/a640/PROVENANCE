@@ -1,0 +1,38 @@
+ArmSmmu4KStreams.c is an SM8150 overlay of the preserved MIT source
+upstream/ArmSmmu4K/ArmSmmu4KStreams.c, SHA256 f0bc11a03a240182dac0e2417920b8c2415e759855e5badcce6fab2638879702.
+The original source and upstream provenance are retained unchanged.
+S2CR readback compares the TYPE/EXIDVALID and translation attributes
+selected by NabuSmmuPolicy.h; all exact SMR, overlap, ownership, global
+fault, poisoning and mutation-order checks remain in place.
+
+OriginalAcceleratorABI.h is a verbatim copy of the same-named MIT header from
+https://github.com/RigoLigoRLC/unixnu-adrenometal (the AdrenoMetal front end that
+pairs with unixnu-adreno6xx 83a0453e). It declares the original IOAcceleratorES
+ancestry that NativeAdrenoAccelerator.cpp compiles against.
+
+License and upstream identity for the vendored header:
+LICENSE in this directory reproduces the upstream MIT license text, with
+Copyright (c) 2026 NativeMetal contributors. It covers the vendored
+OriginalAcceleratorABI.h only and does not relicense any other file here.
+The blob we carry is byte-identical to OriginalAcceleratorABI.h in
+RigoLigoRLC/unixnu-adrenometal at cc4c26f3ba1091ecb7576d3644fdb5169db3efca,
+which last changed the file in 1b08de1644e63632fcc486de703521b26a087d72.
+SHA256 1dc63af83fc46022166b5e656b5c7b82b004798a52805152077699971673ee0a,
+585 bytes, measured on the file as stored on disk; the repository normalizes
+line endings when committing, so the committed blob hash can differ from it.
+UniXNU/AdrenoMetal and UniXNU/NativeMetal carry the same blob, imported there
+as Import NativeMetal. No byte of the supplied header was altered here.
+
+NabuGpuMemoryPolicy.h and the NativeAdrenoMemory.h allocation overload select
+Normal-NC owned user BOs only when NABU_GPU_METAL=1. The original seven-argument
+allocator remains unchanged: write_combined=true bypasses its WB pool, chooses
+kIOMapWriteCombineCache and records NC physical spans. Existing prepared-backing
+reuse still matches the cache mode. Explicit cache-mode calls and imported pages
+retain their old behavior; no A642L cached-coherence gate is enabled.
+NativeAdrenoGpuContext.cpp gives Metal the VM's existing 4096-record bound, not
+the 16-record diagnostic pool. This allocates only CPU mapping/alias metadata at
+attach, not backing BOs or additional GPU page tables. Allocation failure remains
+fatal to bring-up. A Metal-only static assertion in NativeAdrenoVm.cpp bounds the
+two attach-time arrays to 1 MiB using their actual compiled element sizes. The
+diagnostic capacity and five bootstrap mappings are unchanged.
+These source changes do not qualify BO mapping, completion or rendering on hardware.

@@ -1,0 +1,14 @@
+Pristine copy of https://github.com/RigoLigoRLC/unixnu-adreno6xx at 83a0453e981567a30cecd6486bdb8b3b33d64683
+(branch unixnu-sm-t733, A642L/SM7325). Top-level sources only; tests omitted.
+Licenses: MIT (LICENSE) and GPL-2.0-only files per SPDX header (COPYING).
+The nabu A640 changes live in ../../a640 and replace same-named files at build time.
+Local deviation: native_legacy_frame_profile_dump is no longer declared or
+called in NativeAdrenoPublish.cpp. Upstream declares it weak_import, which the
+static nabu kernel link cannot leave undefined, and no nabu object defines it.
+Local deviation (2026-10-31, owner probe submit path): NativeAdrenoPublish.cpp
+polls a sleeping wait once more after its deadline instead of reporting a
+timeout when the completion wakeup is missing; NativeAdrenoUserClient.cpp
+freeBo advances the scheduler (as closeOwner does) so a completed job's own
+reference is dropped before the unmap; NativeAdrenoScheduler.cpp accept
+refuses the buffer range checks of submitResources before reserving a job, so
+one bad client IB no longer faults the whole scheduler from advance().

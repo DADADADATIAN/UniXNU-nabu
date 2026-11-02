@@ -1,0 +1,14 @@
+diff --git a/NativeAdrenoMetalPlugin.mm b/NativeAdrenoMetalPlugin.mm
+index b9b4a4d..0ae2b70 100644
+--- a/NativeAdrenoMetalPlugin.mm
++++ b/NativeAdrenoMetalPlugin.mm
+@@ -407,6 +407,9 @@ static id deviceForPort(unsigned port) {
+ - (id)initWithAcceleratorPort:(unsigned)port {
+     self = [super init];
+     if (!self || !port) return nil;
++    // nabu: a process whose sandbox refuses every shader-cache directory still gets its device; the runtime then
++    // misses on every cache access (metal2vulkan patch 0007). backboardd's device open failed on its cache in 419b.
++    setenv("METAL2VULKAN_SHADER_CACHE_OPTIONAL", "1", 0);
+     if (publish::requested()) return publish::deviceForPort(port);
+     static bool attempted;
+     if (attempted) return nil;

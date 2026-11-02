@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+// Xiaomi Pad 5 (nabu) board DTS for UniXNU. Hardware values come from the
+// unit's own firmware device tree (/sys/firmware/fdt) and the SM8150
+// reference pinned in the soc source.
+/dts-v1/;
+/include/ "sm8150.dtsi"
+
+/ {
+    model = "Xiaomi Pad 5";
+    compatible = "xiaomi,nabu", "qcom,sm8150";
+
+    // Physical DRAM: three banks separated by the TrustZone/firmware hole at
+    // 0xb9900000..0xc0000000. The ADT contract binds dram-base 0xc0000000,
+    // dram-size 0x140000000 (5 GiB) as the XNU-owned window.
+    memory@80000000 {
+        device_type = "memory";
+        reg = <0 0x80000000 0 0x3cc00000>;
+    };
+    memory@c0000000 {
+        device_type = "memory";
+        reg = <0 0xc0000000 0 0x80000000>;
+    };
+    memory@140000000 {
+        device_type = "memory";
+        reg = <0x1 0x40000000 0 0xc0000000>;
+    };
+
+    reserved-memory {
+        #address-cells = <2>;
+        #size-cells = <2>;
+        ranges;
+
+        // Firmware GOP framebuffer: 1600x2560 32bpp, rowBytes 6400.
+        framebuffer@9c000000 {
+            reg = <0 0x9c000000 0 0x1000000>;
+            no-map;
+        };
+
+        // GPU ZAP shader region (a640_zap.b02 signature region).
+        zap@98f15000 {
+            reg = <0 0x98f15000 0 0x2000>;
+            no-map;
+        };
+    };
+};
+
+&ufs { status = "okay"; };
+&ufs_smmu { status = "okay"; };
+&gpu { status = "okay"; };
+&gmu { status = "okay"; };
+&gpu_smmu { status = "okay"; };
+&gpucc { status = "okay"; };
+&gcc { status = "okay"; };

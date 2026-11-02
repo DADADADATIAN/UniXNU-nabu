@@ -1,0 +1,42 @@
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -499,6 +499,9 @@ SECURITY_READ_ONLY_LATE(boolean_t)   pmap_panic_dev_wimg_on_managed = TRUE;
+ SECURITY_READ_ONLY_LATE(boolean_t)   pmap_panic_dev_wimg_on_managed = FALSE;
+ #endif
+
++/* nabu: managed-DRAM RT mappings use Normal Non-Cacheable memory (boot-arg t733-managed-rt-normal=1). */
++static SECURITY_READ_ONLY_LATE(unsigned int) nabu_managed_rt_normal = 0;
++
+ MARK_AS_PMAP_DATA SIMPLE_LOCK_DECLARE(asid_lock, 0);
+ SECURITY_READ_ONLY_LATE(uint32_t) pmap_max_asids = 0;
+ SECURITY_READ_ONLY_LATE(uint16_t) asid_chunk_size = 0;
+@@ -2344,6 +2347,12 @@ pmap_bootstrap(
+
+ 	PE_parse_boot_argn("pmap_panic_dev_wimg_on_managed", &pmap_panic_dev_wimg_on_managed, sizeof(pmap_panic_dev_wimg_on_managed));
+
++	/* The A640 driver reads the same argument to accept RT imports as Normal NC (NativeAdrenoCpu.cpp). */
++	PE_parse_boot_argn("t733-managed-rt-normal", &nabu_managed_rt_normal, sizeof(nabu_managed_rt_normal));
++	if (nabu_managed_rt_normal == 1) {
++		kprintf("nabu pmap: managed RT DRAM uses Normal Non-Cacheable memory\n");
++	}
++
+
+ #if PMAP_CS_PPL_MONITOR
+ 	/* Initialize the PPL trust cache read-write lock */
+@@ -5839,7 +5848,14 @@ wimg_to_pte(unsigned int wimg, __unused pmap_paddr_t pa)
+ 		pte |= ARM_PTE_NX | ARM_PTE_PNX;
+ 		break;
+ 	case VM_WIMG_RT:
+-		pte = ARM_PTE_ATTRINDX(CACHE_ATTRINDX_RT);
++		/* Without HAS_UCNORMAL_MEM, CACHE_ATTRINDX_RT is Device-nGnRnE: unaligned and SIMD CPU accesses to
++		 * IOSurface (RT) pages fault, and the GPU cannot import them. Managed DRAM uses the architectural
++		 * Normal NC attribute instead; physical I/O addresses keep their platform-defined RT attribute. */
++		if (nabu_managed_rt_normal == 1 && pa_valid(pa)) {
++			pte = ARM_PTE_ATTRINDX(CACHE_ATTRINDX_WRITECOMB);
++		} else {
++			pte = ARM_PTE_ATTRINDX(CACHE_ATTRINDX_RT);
++		}
+ 		pte |= ARM_PTE_NX | ARM_PTE_PNX;
+ 		break;
+ 	case VM_WIMG_POSTED:

@@ -1,0 +1,22 @@
+diff --git a/src/freedreno/vulkan/tu_knl_darwin.cc b/src/freedreno/vulkan/tu_knl_darwin.cc
+index 6f7102f..1717f47 100644
+--- a/src/freedreno/vulkan/tu_knl_darwin.cc
++++ b/src/freedreno/vulkan/tu_knl_darwin.cc
+@@ -235,6 +235,9 @@ dw_call(struct tu_device *dev, uint32_t method, const void *in, size_t in_size,
+    return dw_call(darwin_connection_for(dev), method, in, in_size, out, out_size);
+ }
+ 
++/* nabu A640: the trace ABI header exists only for the A740 driver; tu_darwin_trace.h
++ * declares this function, and tu_darwin_trace.cc uses it, only when it is present. */
++#if __has_include("NativeAdrenoTrace.h")
+ int
+ tu_darwin_trace_call(struct tu_device *device, uint32_t method,
+                      const void *input, size_t input_size,
+@@ -242,6 +245,7 @@ tu_darwin_trace_call(struct tu_device *device, uint32_t method,
+ {
+    return dw_call(device, method, input, input_size, output, output_size);
+ }
++#endif
+ 
+ static void darwin_refresh_mapping_budget(struct tu_device *dev, bool force);
+ 

@@ -1,0 +1,12 @@
+# Copy to local.toml (ignored by Git) to point sources at local checkouts.
+# Command line options (--local, --local-drivers, ...) take precedence.
+
+[[source]]
+kind = "soc"
+name = "sm8150"
+local = "../UniXNU-sm8150-common"
+
+# [[source]]
+# kind = "driver"
+# name = "AdrenoMetal"
+# local = "../unixnu-adrenometal"

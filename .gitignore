@@ -1,0 +1,17 @@
+out/
+.cache/
+local.toml
+__pycache__/
+*.pyc
+
+# Apple and vendor artifacts never enter Git.
+*.ipsw
+*.dmg
+*.img
+*.im4p
+*.mbn
+*.fw
+*.bin
+*.macho
+*.trustcache
+*.efi

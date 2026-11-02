@@ -1,0 +1,9 @@
+# nabu device XNU patch series, applied in order after arch/soc/os series.
+# nabu-managed-rt-normal.patch is inert without boot-arg t733-managed-rt-normal=1;
+# nabu-vc-text-scale.patch is inert without nabu-vc-scale=1..4.
+nabu-union-lower-directory.patch
+nabu-union-getattrlistbulk.patch
+nabu-managed-rt-normal.patch
+nabu-vc-text-scale.patch
+nabu-master-second-trust-cache.patch
+nabu-native-console.patch

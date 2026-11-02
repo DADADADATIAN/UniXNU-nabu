@@ -1,0 +1,39 @@
+# G0: source-built kernel/crypto/platform checkpoint, not an iPadOS system root.
+[board]
+name = "nabu"
+soc = "SM8150"
+description = "Xiaomi Pad 5 source bootstrap"
+kit = "nabu"
+
+[ipsw]
+product = "iPad7,11"
+version = "17.7"
+build = "21H16"
+device_class = "j171ap"
+chip_id = 0x8010
+board_id = 0x1C
+fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustCache"]
+
+[ipsw.sha256]
+"kernelcache.release.ipad7c" = "2c395d03d21129d79f4ad9648fe30b1dd8fc62b17f180b79976604102a4678ba"
+"DeviceTree.j171ap.im4p" = "1d5ce5ee967b98df2b0017931d3a18b77add92f8902b42b12061ab5e21fd0ebb"
+"044-17597-018.dmg.trustcache" = "7640ab0933ba6a9048b6de8cf7e1e0d4806350c5eb2ccb3bc1284b79b1499e2d"
+"044-18090-018.dmg.trustcache" = "381d0eeb39949a4ed9cbca7f89ae3442fa37e9afcaaa5f1314465b43aaa46ea4"
+
+[kernel]
+defconfig = "nabu_bootstrap_defconfig"
+archives = [
+  "build-corecrypto-14.py",
+  "build-corecrypto-14.py --namespace",
+  "build-nabu-platform.py ArmDTPlatform",
+  "build-nabu-platform.py ArmCpu",
+  "build-libpthread-kernel.py",
+]
+
+[kernel.prelink]
+tool = "kits/NativePrelink/emit_prelink.py"
+kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
+kernelcache_sha256 = "f7d1952c7a21633d212eccf288e77444fff0cc86976db5de292f6819c2ffa1b2"
+slide = "-0x1360000"
+# Includes original corecrypto through the APFS dependency closure. No AMFI/UI claim.
+roots = ["com.apple.filesystems.apfs"]

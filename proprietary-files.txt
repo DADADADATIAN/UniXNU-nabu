@@ -1,0 +1,15 @@
+# Required firmware inputs: relative path | source | SHA-256 | consumer
+# Entries are fetched from the owner's IPSW or the device vendor partition into
+# .cache/firmware at build time and are never committed to Git.
+
+# iPadOS 17.7 (21H16, iPad7,11 j171ap) — extracted from the user-owned IPSW.
+.cache/firmware/kernelcache.release.ipad7c | IPSW iPad_10.2_17.7_21H16_Restore.ipsw | 2c395d03d21129d79f4ad9648fe30b1dd8fc62b17f180b79976604102a4678ba | prelink slide and original-ABI binding reference
+.cache/firmware/DeviceTree.j171ap.im4p | IPSW iPad_10.2_17.7_21H16_Restore.ipsw | 1d5ce5ee967b98df2b0017931d3a18b77add92f8902b42b12061ab5e21fd0ebb | ADT identity template
+.cache/firmware/044-17597-018.dmg.trustcache | IPSW OS image | 7640ab0933ba6a9048b6de8cf7e1e0d4806350c5eb2ccb3bc1284b79b1499e2d | payload static trust cache
+.cache/firmware/044-18090-018.dmg.trustcache | IPSW Cryptex1 SystemOS image | 381d0eeb39949a4ed9cbca7f89ae3442fa37e9afcaaa5f1314465b43aaa46ea4 | cache-carrier trust cache
+
+# Adreno 640 vendor firmware — read from the device /vendor/firmware partition.
+.cache/firmware/a640_gmu.bin | device vendor partition | 3ff0c02708bbe78641db887fa62f3a7f9337934d0c2ce0b961ef7c43172591d2 | NabuAdreno GMU bring-up
+.cache/firmware/a630_sqe.fw | device vendor partition | 36298bd53ea3666413d288a3a3f5266f67fcb6db038a0a481af5869d1c17859c | NabuAdreno SQE firmware
+.cache/firmware/a640_zap.mdt | device vendor partition | 5c5a956febabc8c8f3fc7b2cc48ae22bcab9ae25a9853c7cd0baadc9ec406882 | NabuAdreno ZAP metadata
+.cache/firmware/a640_zap.b02 | device vendor partition | e24a4f483b71ea19715910f01e1abf94280756df731cad05df48fd7714e34198 | NabuAdreno ZAP shader signature

@@ -1,0 +1,11 @@
+# Common drivers and pinned Apple sources come from UniXNU/feeds.toml.
+
+[[source]]
+name = "sm8150"
+kind = "soc"
+git = "https://github.com/zzweiqing/UniXNU-sm8150-common"
+# Initial public commit of the SoC repository (bump on review).
+commit = "d3dec93a9bc3e3f368140ae2601ebfd6606c72f0"
+
+# Vendor firmware and IPSW inputs are fetched at build time into .cache/ per
+# proprietary-files.txt and are never committed.

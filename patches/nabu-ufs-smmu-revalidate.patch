@@ -1,0 +1,192 @@
+diff --git a/SmmuTakeover.h b/SmmuTakeover.h
+--- a/SmmuTakeover.h
++++ b/SmmuTakeover.h
+@@ -3,8 +3,14 @@
+ struct UfsSmmuPlan {
+   unsigned slot = 0xffffffffU, bank = 0, pages = 0;
+   uint32_t smr = 0, s2cr = 0;
++  uint32_t cbar = 0, sctlr = 0, cba2r = 0;
+   bool reuse = false;
+   const char *error = nullptr;
++  uint16_t stream = 0;
++  uint64_t dma = 0, bytes = 0;
++  unsigned mapBytes = 0, bankFromTop = 0;
++  uint32_t idr0 = 0, idr1 = 0, idr2 = 0;
++  unsigned smrgCount = 0, contextBanks = 0;
+ };
+ // ARM IHI 0062D.c sections 1.6 and 3.7: VA64=0 still rejects inputs above
+ // 32 bits with SCTLR.M=0. With VA64=1 the bypass range is bounded by all
+@@ -25,7 +31,10 @@
+                                    unsigned mapBytes = 0xd0000U)
+ {
+   UfsSmmuPlan p;
++  p.stream = stream; p.dma = dma; p.bytes = bytes;
++  p.mapBytes = mapBytes; p.bankFromTop = bankFromTop;
+   uint32_t idr0 = read(0x20), idr2 = read(0x28);
++  p.idr0 = idr0; p.idr2 = idr2;
+   unsigned count = idr0 & 255;
+   if (!(idr0 & (1U << 30)) || !(idr2 & (1U << 12))) {
+     p.error = "SMMU AArch64 stage 1 unsupported"; return p;
+@@ -38,22 +47,27 @@
+   }
+   uint32_t idr1 = read(0x24);
+   unsigned banks = idr1 & 255;
++  p.idr1 = idr1; p.smrgCount = count; p.contextBanks = banks;
+   p.pages = 1U << (((idr1 >> 28) & 7) + 1);
+   if ((idr1 >> 31) || !count || p.pages > 128 || banks < 2 || banks > 128 ||
+       (p.pages + banks) * 4096 > mapBytes) {
+     p.error = "unsupported SMMU geometry"; return p;
+   }
+-  if (count > 128) count = 128; // Firmware's reliably accessible groups only.
++  if (count > 128) {
++    p.error = "unsupported SMMU stream-match geometry"; return p;
++  }
+   if (bankFromTop >= banks - 1) {p.error = "no free context bank"; return p;}
+   p.bank = banks - 1 - bankFromTop;
+   unsigned matches = 0;
+   for (unsigned i = 0; i < count; ++i) {
+     uint32_t smr = read(0x800 + 4 * i);
++    uint32_t s2cr = read(0xc00 + 4 * i);
+     if (!(smr & 0x80000000U)) {
+-      if (!p.reuse) p.slot = i;
++      if (!p.reuse) {
++        p.slot = i; p.smr = smr; p.s2cr = s2cr;
++      }
+       continue;
+     }
+-    uint32_t s2cr = read(0xc00 + 4 * i);
+     uint32_t mask = (smr >> 16) & 0x7fff;
+     bool match = ((smr ^ stream) & 0xffff & ~mask) == 0;
+     bool ourBank = ((s2cr >> 16) & 3) == 0 && (s2cr & 255) == p.bank;
+@@ -63,15 +77,21 @@
+         p.slot = i; p.smr = smr; p.s2cr = s2cr;
+         p.error = "conflicting UFS stream mapping"; return p;
+       }
+-      p.reuse = true; p.slot = i;
++      p.reuse = true; p.slot = i; p.smr = smr; p.s2cr = s2cr;
+     } else if (ourBank) {
+       p.slot = i; p.smr = smr; p.s2cr = s2cr;
+       p.error = "reserved context bank already used"; return p;
+     }
+   }
+   uint32_t sctlr = read((p.pages + p.bank) * 4096);
+-  if ((sctlr & 1) || (p.reuse && (sctlr || read(0x1000 + 4 * p.bank) != 0x10000 ||
+-                                (read(0x1800 + 4 * p.bank) & ~1U)))) {
++  uint32_t cbar = read(0x1000 + 4 * p.bank);
++  uint32_t cba2r = read(0x1800 + 4 * p.bank);
++  p.sctlr = sctlr; p.cbar = cbar; p.cba2r = cba2r;
++  // M controls stage-1 translation. Preserve firmware-owned fault, attribute
++  // and ASID fields when this exact stream owns a stage-2-bypass context.
++  bool bypassReuse = !(sctlr & 1U) && (((cbar >> 16) & 3U) == 1U) &&
++                     (cba2r & 1U);
++  if ((sctlr & 1U) || (p.reuse && !bypassReuse)) {
+     p.error = "reserved context bank not bypass"; return p;
+   }
+   if (p.slot == 0xffffffffU) p.error = "no free stream-match group";
+@@ -89,7 +109,20 @@
+   enum {kBankAttempts = 8};
+   UfsSmmuPlan first = planUfsSmmuBank(stream, dma, bytes, read, 0, mapBytes);
+   if (!first.error) return first;
+-  // "conflicting" is retried too: our own stream may already sit on a lower bank from an earlier run that had to fall back.
++  // Firmware can place this exact stream below the reserved-bank search window.
++  // Locate that bank directly, then run the SAME mask, exclusivity, geometry and
++  // bypass checks. Do not retarget a live translation or relax a shared mapping.
++  if (!__builtin_strcmp(first.error, "conflicting UFS stream mapping") &&
++      (first.smr & 0x80000000U) && !((first.smr >> 16) & 0x7fffU) &&
++      ((first.s2cr >> 16) & 3U) == 0) {
++    unsigned existingBank = first.s2cr & 255U;
++    if (existingBank > 0 && existingBank < first.contextBanks) {
++      UfsSmmuPlan existing = planUfsSmmuBank(stream, dma, bytes, read,
++        first.contextBanks - 1 - existingBank, mapBytes);
++      if (!existing.error) return existing;
++    }
++  }
++  // The ordinary bounded allocation fallback still checks the top banks.
+   auto retryable = [](const char *e) {
+     return !__builtin_strcmp(e, "reserved context bank already used") || !__builtin_strcmp(e, "reserved context bank not bypass") ||
+            !__builtin_strcmp(e, "conflicting UFS stream mapping");
+@@ -103,29 +136,69 @@
+   return first;
+ }
+ 
+-// The caller must first quiesce the UFS queue. The planner refuses other
+-// streams sharing this bank and enabled translation; no live context is
+-// disabled here. Write callbacks must complete an MMIO barrier before return.
++// Compare the saved request and hardware identity before configuration writes.
++// This narrows plan/configure drift; it does not make external concurrent MMIO safe.
++template <class Plan>
++static bool sameUfsSmmuPlan(const Plan &saved, const Plan &current)
++{
++  return saved.stream == current.stream && saved.dma == current.dma &&
++         saved.bytes == current.bytes && saved.mapBytes == current.mapBytes &&
++         saved.bankFromTop == current.bankFromTop &&
++         saved.idr0 == current.idr0 && saved.idr1 == current.idr1 &&
++         saved.idr2 == current.idr2 && saved.smrgCount == current.smrgCount &&
++         saved.contextBanks == current.contextBanks && saved.pages == current.pages &&
++         saved.bank == current.bank && saved.slot == current.slot &&
++         saved.reuse == current.reuse && saved.smr == current.smr &&
++         saved.s2cr == current.s2cr && saved.cbar == current.cbar &&
++         saved.sctlr == current.sctlr && saved.cba2r == current.cba2r;
++}
++
++// The caller must first quiesce both UFS request queues and exclusively own this
++// SMMU. Revalidation narrows plan/configure drift but does not remove external
++// races or provide a general rollback contract. Write callbacks must complete an
++// MMIO barrier before return.
+ template <class Read, class Write>
+ static const char *configureUfsSmmu(const UfsSmmuPlan &p, uint16_t stream, Read read, Write write)
+ {
+   if (p.error) return p.error;
++  if (stream != p.stream) return "SMMU request identity mismatch";
++  UfsSmmuPlan current = planUfsSmmuBank(p.stream, p.dma, p.bytes, read,
++                                       p.bankFromTop, p.mapBytes);
++  if (current.error) return "SMMU revalidation failed";
++  if (!sameUfsSmmuPlan(p, current)) return "SMMU revalidation mismatch";
+   unsigned cb = (p.pages + p.bank) * 4096;
+-  if (!p.reuse) write(cb, 0);
+-  if (read(cb) != 0) return "SMMU bypass disable readback";
+-  // Set VA64 before exposing a newly allocated stream. Repair an exclusive
+-  // existing 32-bit bypass too; do not silently reuse the faulty state.
+-  if (read(0x1800 + 4 * p.bank) != 1) write(0x1800 + 4 * p.bank, 1);
+-  if (!p.reuse) write(0x1000 + 4 * p.bank, 0x10000);
+-  if (read(0x1800 + 4 * p.bank) != 1 || read(0x1000 + 4 * p.bank) != 0x10000 || read(cb) != 0)
+-    return "SMMU VA64 bypass readback";
++  unsigned smrOffset = 0x800 + 4 * p.slot;
++  uint32_t oldSmr = read(smrOffset);
++  if (oldSmr != p.smr || read(0xc00 + 4 * p.slot) != p.s2cr)
++    return "SMMU slot changed before configuration";
++  if (!p.reuse) {
++    write(cb, 0);
++    if (read(cb) != 0) return "SMMU bypass disable readback";
++    write(0x1800 + 4 * p.bank, 1);
++    write(0x1000 + 4 * p.bank, 0x10000);
++    if (read(0x1800 + 4 * p.bank) != 1 ||
++        read(0x1000 + 4 * p.bank) != 0x10000 || read(cb) != 0)
++      return "SMMU VA64 bypass readback";
++  } else {
++    // Do not rewrite firmware ownership. Recheck the fields that define the
++    // exact stream's stage-2-bypass contract after planning.
++    if ((read(cb) & 1U) ||
++        ((read(0x1000 + 4 * p.bank) >> 16) & 3U) != 1U ||
++        !(read(0x1800 + 4 * p.bank) & 1U))
++      return "SMMU reused bypass changed";
++  }
+   if (!p.reuse) {
+     write(0xc00 + 4 * p.slot, p.bank);
+     if (read(0xc00 + 4 * p.slot) != p.bank) return "SMMU stream context readback";
+-    write(0x800 + 4 * p.slot, 0x80000000U | stream);
+-  }
+-  if (read(0x800 + 4 * p.slot) != (0x80000000U | stream) ||
+-      read(0xc00 + 4 * p.slot) != p.bank)
++    write(smrOffset, 0x80000000U | stream);
++  }
++  if (read(smrOffset) != (0x80000000U | stream) ||
++      read(0xc00 + 4 * p.slot) != p.bank) {
++    // Return a newly occupied slot to its captured pre-write value before
++    // refusing publication. This bounded cleanup is not a general rollback
++    // guarantee if the restore write is ignored or external MMIO races us.
++    if (!p.reuse) write(smrOffset, oldSmr);
+     return "SMMU stream mapping readback";
++  }
+   return nullptr;
+ }

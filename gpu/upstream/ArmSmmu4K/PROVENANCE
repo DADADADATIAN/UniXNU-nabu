@@ -1,0 +1,2 @@
+Pristine copy of https://github.com/RigoLigoRLC/unixnu-arm-smmu4k at 599ba82f96f3e10b0afbd784c040127d38e2683a
+(the ArmSmmu4K revision pinned by RigoLigoRLC/unixnu-core 1aa8c23b for Adreno6xx 83a0453). Tests omitted. MIT.
