@@ -4,8 +4,72 @@
 name = "sm8150"
 kind = "soc"
 git = "https://github.com/zzweiqing/UniXNU-sm8150-common"
-# Initial public commit of the SoC repository (bump on review).
-commit = "d3dec93a9bc3e3f368140ae2601ebfd6606c72f0"
+# Public SoC repository commit (bump on review).
+commit = "f7cb9482ed326ae52b75860bd510b4a66dc9380d"
+
+# Component pins reproducing the proven nabu build (submodule gitlinks of
+# UniXNU/UniXNU 245aca1a and vendored PROVENANCE records). Upstream renamed the
+# Native* repositories; the pinned commits predate the renames.
+
+[[source]]
+name = "ArmCpu"
+kind = "driver"
+git = "https://github.com/UniXNU/ArmCpu.git"
+commit = "1951cc8444b340d7d8879e9418220cf29eb711d7"
+
+[[source]]
+name = "ArmDTPlatform"
+kind = "driver"
+git = "https://github.com/UniXNU/ArmDTPlatform.git"
+commit = "0d544705c2e89725caabc0542bb96bc8febd8c70"
+
+[[source]]
+name = "DarwinBoot"
+kind = "driver"
+git = "https://github.com/UniXNU/DarwinBoot.git"
+commit = "d099354d0eab34df5088ca1ba89c9c88bc3260bb"
+
+[[source]]
+name = "ShengUfs"
+kind = "driver"
+git = "https://github.com/UniXNU/ShengUfs.git"
+commit = "af785c1777161a62931425c2faaa536ce0bebd5b"
+
+[[source]]
+name = "RamBlock"
+kind = "driver"
+git = "https://github.com/UniXNU/RamBlock.git"
+commit = "d4d22d9819b0162eda49f6402235dddc2279410d"
+
+[[source]]
+name = "VirtioMmioBlock"
+kind = "driver"
+git = "https://github.com/UniXNU/VirtioMmioBlock.git"
+commit = "98909eb9198a4360d7a43be831887cb8b74d814d"
+
+[[source]]
+name = "GopFramebuffer"
+kind = "driver"
+git = "https://github.com/UniXNU/GopFramebuffer.git"
+commit = "cf3b42979a9c44219e7bb149543e6fc3388b58ed"
+
+[[source]]
+name = "AppleKeyStoreState"
+kind = "driver"
+git = "https://github.com/UniXNU/AppleKeyStoreState.git"
+commit = "e59bac4ad1ac8825919ae94da8440a64d8ab90b3"
+
+[[source]]
+name = "XnuPrelink"
+kind = "kit"
+git = "https://github.com/UniXNU/XnuPrelink.git"
+commit = "2b6ffb50117eee820b98aca9bd51b5c7dfb2970e"
+
+[[source]]
+name = "VerifiedRoot"
+kind = "kit"
+git = "https://github.com/UniXNU/VerifiedRoot.git"
+commit = "2854c61f6c4dfda870ac3d93e1f03d9181edb041"
 
 # Vendor firmware and IPSW inputs are fetched at build time into .cache/ per
 # proprietary-files.txt and are never committed.

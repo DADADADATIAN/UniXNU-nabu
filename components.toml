@@ -61,12 +61,13 @@ build = ["nabu_touch_build.py"]
 outputs = []
 
 [[component]]
-id = "NativeRamBlock"
+id = "RamBlock"
 kind = "driver"
 function = "Volatile RAM Data volume with fixed seed UUID"
 scope = "storage"
-# Volatile transport (gitlink of UniXNU/UniXNU 245aca1a).
-repository = "https://github.com/UniXNU/NativeRamBlock.git"
+# Volatile transport (gitlink of UniXNU/UniXNU 245aca1a). Upstream renamed the
+# repository NativeRamBlock -> RamBlock; the pinned commit predates the rename.
+repository = "https://github.com/UniXNU/RamBlock.git"
 revision = "d4d22d9819b0162eda49f6402235dddc2279410d"
 path = "drivers/NativeRamBlock"
 hardware = ["SM8150"]
@@ -127,8 +128,9 @@ id = "XnuPrelink"
 kind = "kit"
 function = "Mach-O prelink producing the ESP kernel.macho candidate"
 scope = "board"
-# The proven build calls it NativePrelink (kits/NativePrelink/emit_prelink.py).
-repository = "https://github.com/UniXNU/NativePrelink.git"
+# The proven build calls it NativePrelink (kits/NativePrelink/emit_prelink.py);
+# upstream renamed the repository NativePrelink -> XnuPrelink, pin predates it.
+repository = "https://github.com/UniXNU/XnuPrelink.git"
 revision = "2b6ffb50117eee820b98aca9bd51b5c7dfb2970e"
 path = "kits/NativePrelink"
 hardware = []
@@ -147,7 +149,8 @@ id = "VirtioMmioBlock"
 kind = "driver"
 function = "Volatile scratch storage transport (proven pin: NativeVirtioBlock)"
 scope = "storage"
-repository = "https://github.com/UniXNU/NativeVirtioBlock.git"
+# Upstream renamed NativeVirtioBlock -> VirtioMmioBlock; pin predates rename.
+repository = "https://github.com/UniXNU/VirtioMmioBlock.git"
 revision = "98909eb9198a4360d7a43be831887cb8b74d814d"
 path = "drivers/NativeVirtioBlock"
 hardware = ["SM8150"]
@@ -185,7 +188,8 @@ id = "AppleKeyStoreState"
 kind = "driver"
 function = "Key-store event bridge (proven pin: NativeKeyStoreEvents)"
 scope = "board"
-repository = "https://github.com/UniXNU/NativeKeyStoreEvents.git"
+# Upstream renamed NativeKeyStoreEvents -> AppleKeyStoreState; pin predates it.
+repository = "https://github.com/UniXNU/AppleKeyStoreState.git"
 revision = "e59bac4ad1ac8825919ae94da8440a64d8ab90b3"
 path = "drivers/NativeKeyStoreEvents"
 hardware = ["Xiaomi Pad 5"]

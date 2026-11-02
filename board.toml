@@ -13,13 +13,16 @@ os_profile = "ipados-17.7-21H16"
 description = "Xiaomi Pad 5"
 kit = "nabu"
 
+# Canonical upstream catalog ids. Upstream renamed the Native* repositories:
+# NativeUfs->ShengUfs, NativeRamBlock->RamBlock, NativeVirtioBlock->VirtioMmioBlock,
+# NativePrelink->XnuPrelink, NativeKeyStoreEvents->AppleKeyStoreState. The nabu-only
+# components (NabuAdreno, AdrenoMetal fork, metal2vulkan, NabuPlatform, NabuTouch,
+# device) are declared in components.toml pending upstream catalog registration.
 [components]
 include = [
   "ArmDTPlatform", "ArmCpu", "DarwinBoot", "XnuPrelink",
-  "NativeUfs", "NativeRamBlock", "VirtioMmioBlock",
+  "ShengUfs", "RamBlock", "VirtioMmioBlock",
   "GopFramebuffer", "AppleKeyStoreState",
-  "NabuAdreno", "AdrenoMetal", "metal2vulkan",
-  "NabuPlatform", "NabuTouch", "device",
 ]
 
 [device_tree]

@@ -72,7 +72,7 @@ evidence = [{ kind = "device", reference = "https://github.com/zzweiqing/hackios
 [[area]]
 id = "storage"
 status = "device-verified"
-components = ["NativeUfs", "NativeRamBlock", "VirtioMmioBlock", "AppleKeyStoreState"]
+components = ["ShengUfs", "RamBlock", "VirtioMmioBlock", "AppleKeyStoreState", "VerifiedRoot"]
 paths = ["ufs/**", "scripts/build-nabu-ufs*.py", "scripts/build-nabu-ram-block.py", "scripts/build-nabu-owner-root.py", "dts/**", "board.toml", "proprietary-files.txt"]
 inputs = ["SM8150 UFS host controller at 0x01d84000, GCC window 0x177000, SMMU 0x15000000 stream 0x300, 4096-byte blocks", "Unallocated LUN0 range LBA 2739747-18364746 after Ubuntu partition removal; OS window at LBA 2739968 and SystemOS window at LBA 4204809"]
 configuration = ["native-ufs-root=1 with direct window boot arguments publishes the OS and SystemOS windows as block devices.", "Data volume is a volatile RAM block seeded at boot with UUID 0A5EED00-0000-4000-8000-000000000001; the SystemOS cryptex union-mounts as the cache carrier C374ACD3-75FE-4FAD-B02E-FC3C9A86DA11."]
