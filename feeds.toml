@@ -5,7 +5,7 @@ name = "sm8150"
 kind = "soc"
 git = "https://github.com/zzweiqing/UniXNU-sm8150-common"
 # Public SoC repository commit (bump on review).
-commit = "f7cb9482ed326ae52b75860bd510b4a66dc9380d"
+commit = "f363dcda920101a99e440ce3e8b68849122a3c0a"
 
 # Component pins reproducing the proven nabu build (submodule gitlinks of
 # UniXNU/UniXNU 245aca1a and vendored PROVENANCE records). Upstream renamed the
