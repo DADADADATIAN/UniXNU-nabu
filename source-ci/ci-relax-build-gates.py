@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Relax the pinned XNU build gates for a CI-only kernel compile check.
 
-Mirrors exactly the build-script rewrites that source-ci/prepare_source.py
-applies for the nabu owner/Data/UFS profiles, without needing the private
-owner-policy, display-reference or IPSW-small inputs. Only gate conditions are
-rewritten; no kernel source is touched.
+Mirrors only the gate conditions that source-ci/prepare_source.py would have
+satisfied through its private owner-policy input. Three `exit 1` guards are
+rewritten so an image-less compile check can proceed; no kernel source and no
+link inputs are touched.
 
 Usage:
     ci-relax-build-gates.py <path-to>/scripts/build-xnu-4k-baseline.sh
@@ -15,31 +15,30 @@ the pinned script text changed).
 import sys
 from pathlib import Path
 
+# CRYPTO_BOOTSTRAP_MODE is defined at line ~141, well before these guards, so a
+# bare expansion is safe under `set -u`.
 CRYPTO_GATE = ('if [ "$CRYPTO_BOOTSTRAP_MODE" != prelinked ] '
                '|| [ "${XNU_SOURCE_CORECRYPTO14:-0}" != 1 ]; then')
 
 REPLACEMENTS = [
+    # NativeVirtioBlock gate: the profile sets VIRTIO_BLOCK=1 but NATIVE_AES=n.
     ('if [ "${XNU_NATIVE_AES:-0}" != 1 ]; then\n'
      "    echo 'NativeVirtioBlock currently requires the qualified "
      "NativeAES/original-storage prelink baseline' >&2",
      CRYPTO_GATE + '\n'
      "    echo 'NativeVirtioBlock requires the original crypto/storage prelink closure' >&2"),
+    # NativeRamBlock gate: same NATIVE_AES coupling.
     ('if [ "${XNU_NATIVE_AES:-0}" != 1 ]; then\n'
      "    echo 'NativeRamBlock requires the qualified original "
      "storage/AES prelink closure' >&2",
      CRYPTO_GATE + '\n'
      "    echo 'NativeRamBlock requires the original crypto/storage prelink closure' >&2"),
+    # Root-binding audit gate wants VERIFIED_ROOT_PROBE=1, which needs the
+    # private owner-policy blob. Accept mounted Virtio block instead; the audit
+    # code stays compiled (XNU_OWNER_ROOT_AUDIT=1) and the probe stays inert.
     ('if [ "$OWNER_ROOT_AUDIT" = 1 ] && [ "$OWNER_ROOT_PROBE" != 1 ]; then',
      'if [ "$OWNER_ROOT_AUDIT" = 1 ] '
      '&& [ "${XNU_NATIVE_VIRTIO_BLOCK:-0}" != 1 ]; then'),
-    ('if [ "$OWNER_ROOT_PROBE" = 1 ] && {',
-     'if { [ "$OWNER_ROOT_PROBE" = 1 ] '
-     '|| [ "${XNU_OWNER_ROOT_AUDIT:-0}" = 1 ]; } && {'),
-    ('  if [ "$OWNER_ROOT_PROBE" = 1 ]; then\n    VERIFIED_ROOT_ARCHIVE=',
-     '  if [ "$OWNER_ROOT_PROBE" = 1 ] || [ "$OWNER_ROOT_AUDIT" = 1 ]; then\n'
-     '    VERIFIED_ROOT_ARCHIVE='),
-    ('  "$OWNER_ROOT_PROBE" "${XNU_VERIFIED_ROOT_ARCHIVE:',
-     '  "$((OWNER_ROOT_PROBE | OWNER_ROOT_AUDIT))" "${XNU_VERIFIED_ROOT_ARCHIVE:'),
 ]
 
 
